@@ -21,6 +21,7 @@ import { toolCommandName, AGENT_TOOLS, PROVIDER_MODELS } from './protocol.js';
 import MultilineInput from './MultilineInput.js';
 import SelectionMenu from './SelectionMenu.js';
 import { parseSlashCommand } from './slashCommands.js';
+import { renderMarkdown } from './renderMarkdown.js';
 
 type MenuMode = null | 'provider' | 'model';
 
@@ -50,7 +51,14 @@ function saveHistory(entries: string[]): void {
 
 interface Message {
   id: number;
-  text: string; // may contain ANSI sequences from chalk
+  /** ANSI-colored prefix shown verbatim (e.g. chalk.green("[gemini] ")). */
+  prefix: string;
+  /** Message body — raw markdown for agent messages, plain/ANSI text for others. */
+  text: string;
+  /** True for agent response messages; enables markdown rendering when complete. */
+  isAgent: boolean;
+  /** True while AgentChunk events are still arriving; suppresses markdown rendering. */
+  isStreaming: boolean;
 }
 
 // ---------- constants ----------
@@ -75,8 +83,20 @@ export default function App({ bridge, channel, initialTool = 'Gemini', subscribe
   const msgIdRef = useRef(0);
   const nextId = () => ++msgIdRef.current;
 
-  const push = useCallback((text: string) => {
-    setMessages((prev) => [...prev, { id: nextId(), text }]);
+  const push = useCallback((
+    text: string,
+    opts?: { prefix?: string; isAgent?: boolean; isStreaming?: boolean },
+  ) => {
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: nextId(),
+        prefix: opts?.prefix ?? '',
+        text,
+        isAgent: opts?.isAgent ?? false,
+        isStreaming: opts?.isStreaming ?? false,
+      },
+    ]);
   }, []);
 
   // Append to the last message in-place (for streaming chunks)
@@ -85,6 +105,15 @@ export default function App({ bridge, channel, initialTool = 'Gemini', subscribe
       if (prev.length === 0) return prev;
       const last = prev[prev.length - 1]!;
       return [...prev.slice(0, -1), { ...last, text: last.text + chunk }];
+    });
+  }, []);
+
+  // Mark the last message as complete (stops streaming, enables markdown rendering)
+  const markLastComplete = useCallback(() => {
+    setMessages((prev) => {
+      if (prev.length === 0) return prev;
+      const last = prev[prev.length - 1]!;
+      return [...prev.slice(0, -1), { ...last, isStreaming: false }];
     });
   }, []);
 
@@ -125,9 +154,13 @@ export default function App({ bridge, channel, initialTool = 'Gemini', subscribe
       // Display ALL Prompt events (live echoes AND backlog replays).
       // handleSubmit no longer pushes locally; the bridge echo is the single source of truth.
       push(chalk.bold(`[you] `) + text + '\n');
-      // Pre-push agent prefix so incoming AgentChunk events can appendToLast correctly.
+      // Pre-push agent message placeholder: starts empty, chunks accumulate into `text`.
       const displayTool = toolCommandName(eventTool ?? activeTool);
-      push(chalk.green(`[${displayTool}] `));
+      push('', {
+        prefix: chalk.green(`[${displayTool}] `),
+        isAgent: true,
+        isStreaming: true,
+      });
       setAwaitingFirstChunk(true);
     } else if ('AgentChunk' in event) {
       const { chunk } = event.AgentChunk;
@@ -138,6 +171,8 @@ export default function App({ bridge, channel, initialTool = 'Gemini', subscribe
     } else if ('AgentDone' in event) {
       setAwaitingFirstChunk(false);
       setIsProcessing(false);
+      // Mark the agent message complete so markdown rendering activates.
+      markLastComplete();
       push('\n' + chalk.dim('--- (Done) ---') + '\n');
     } else if ('SystemMessage' in event) {
       push(chalk.yellow(`[System] ${event.SystemMessage.msg}`) + '\n');
@@ -155,7 +190,7 @@ export default function App({ bridge, channel, initialTool = 'Gemini', subscribe
     } else if ('SyncContext' in event) {
       // Suppress — context is injected into the agent prompt, not shown to the user.
     }
-  }, [push, appendToLast, activeTool]);
+  }, [push, appendToLast, markLastComplete, activeTool]);
 
   // Register with the subscriber set provided by index.tsx.
   // The cleanup function automatically deregisters on unmount or when deps change.
@@ -326,9 +361,13 @@ export default function App({ bridge, channel, initialTool = 'Gemini', subscribe
       <Box flexDirection="column" flexGrow={1} overflowY="hidden">
         {messages.map((m, i) => {
           const isLast = i === messages.length - 1;
-          const displayText = isLast && awaitingFirstChunk
-            ? m.text + chalk.yellow(`${SPINNER[spinnerIdx]} thinking...`)
+          // Render markdown for agent messages once streaming is complete.
+          const body = m.isAgent && !m.isStreaming
+            ? renderMarkdown(m.text)
             : m.text;
+          const displayText = isLast && awaitingFirstChunk
+            ? m.prefix + body + chalk.yellow(`${SPINNER[spinnerIdx]} thinking...`)
+            : m.prefix + body;
           return <Text key={m.id}>{displayText}</Text>;
         })}
       </Box>
