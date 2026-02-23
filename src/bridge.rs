@@ -6,6 +6,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::process::Command;
 use tokio::sync::{broadcast, Mutex};
+use serde::Serialize;
 
 const SOCKET_PATH: &str = "/tmp/acomm.sock";
 const MAX_BACKLOG: usize = 100;
@@ -40,7 +41,6 @@ impl SessionLogger {
             .open(&path)
             .await?;
 
-        // タイムスタンプを付与したログ用構造体
         #[derive(Serialize)]
         struct LogEntry<'a> {
             timestamp: String,
@@ -54,11 +54,10 @@ impl SessionLogger {
 
         let j = serde_json::to_string(&entry)?;
         file.write_all(format!("{}\n", j).as_bytes()).await?;
+        file.flush().await?; // 確実に書き込む
         Ok(())
     }
 }
-
-use serde::Serialize;
 
 pub async fn start_bridge() -> Result<(), Box<dyn Error>> {
     if Path::new(SOCKET_PATH).exists() {
@@ -75,7 +74,7 @@ pub async fn start_bridge() -> Result<(), Box<dyn Error>> {
     }));
 
     // セッションロガーの初期化
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/home/yuiseki".into());
     let logger = Arc::new(SessionLogger::new(PathBuf::from(home).join(".cache/acomm/sessions")));
 
     // バックログ管理タスク
@@ -84,7 +83,7 @@ pub async fn start_bridge() -> Result<(), Box<dyn Error>> {
     let logger_for_manager = Arc::clone(&logger);
     tokio::spawn(async move {
         while let Ok(event) = manager_rx.recv().await {
-            // セッションログに記録 (失敗しても Bridge は止めない)
+            // セッションログに記録
             let _ = logger_for_manager.log_event(&event).await;
 
             let mut s = state_for_manager.lock().await;
@@ -285,7 +284,7 @@ mod tests {
         let logger = SessionLogger::new(temp_dir.clone());
         
         let event = ProtocolEvent::Prompt {
-            text: "test message".into(),
+            text: "test_message_content".into(),
             tool: Some(AgentTool::Gemini),
             channel: Some("test_channel".into()),
         };
@@ -297,12 +296,12 @@ mod tests {
             .join(now.format("%Y/%m").to_string())
             .join(now.format("%Y-%m-%d.jsonl").to_string());
 
-        assert!(log_file.exists());
+        assert!(log_file.exists(), "Log file does not exist at {:?}", log_file);
         let content = std::fs::read_to_string(log_file).unwrap();
-        assert!(content.contains("test message"));
+        println!("File content: {}", content);
+        assert!(content.contains("test_message_content"));
         assert!(content.contains("test_channel"));
         
-        // クリーンアップ
         let _ = std::fs::remove_dir_all(temp_dir);
     }
 
@@ -334,6 +333,7 @@ mod tests {
         while start.elapsed() < Duration::from_secs(15) {
             if let Ok(Ok(Some(line))) = tokio::time::timeout(Duration::from_millis(500), lines.next_line()).await {
                 let event: ProtocolEvent = serde_json::from_str(&line).unwrap();
+                println!("Test received: {:?}", event);
                 received_events.push(event);
             }
         }
