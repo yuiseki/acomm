@@ -1,7 +1,9 @@
 # ADR 004: CLI Wrapper Orchestration and TUI Dashboard
 
 ## Status
-Proposed
+Partially superseded by [ADR 005](./005-typescript-ink-tui-and-bridge-architecture.md)
+
+The CLI-wrapper and no-logic-routing decisions remain valid. The Ratatui TUI section (§ TUI Dashboard) has been superseded: the TUI is now implemented in TypeScript/Ink (`acomm-tui`) connected to the Rust binary via a Unix domain socket bridge.
 
 ## Context
 `yuiclaw` aims to be a minimal orchestrator. Instead of re-implementing LLM API clients, it leverages the tools already installed on the user's system (`gemini-cli`, `claude`, etc.). `acomm` must serve as the bridge between these diverse CLI interfaces and the communication channels, including a local TUI for the user.
