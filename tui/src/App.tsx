@@ -110,11 +110,13 @@ export default function App({ bridge, channel, initialTool = 'Gemini', subscribe
   // the subscribe/unsubscribe effect below only fires when deps actually change.
   const handleEvent = useCallback((event: ProtocolEvent) => {
     if ('Prompt' in event) {
-      const { text, channel: ch } = event.Prompt;
-      // Skip echoes of our own TUI prompts — handleSubmit already shows them locally.
-      // Show prompts from other channels (ntfy, slack, etc.) so they're visible.
-      if (ch === channel) return;
-      push(chalk.bold(`\n[${ch ?? 'unknown'}] `) + text + '\n');
+      const { text, tool: eventTool } = event.Prompt;
+      // Display ALL Prompt events (live echoes AND backlog replays).
+      // handleSubmit no longer pushes locally; the bridge echo is the single source of truth.
+      push(chalk.bold(`[you] `) + text + '\n');
+      // Pre-push agent prefix so incoming AgentChunk events can appendToLast correctly.
+      const displayTool = toolCommandName(eventTool ?? activeTool);
+      push(chalk.green(`[${displayTool}] `));
     } else if ('AgentChunk' in event) {
       const { chunk } = event.AgentChunk;
       if (chunk) appendToLast(chunk);
@@ -131,7 +133,7 @@ export default function App({ bridge, channel, initialTool = 'Gemini', subscribe
     } else if ('SyncContext' in event) {
       push(chalk.dim('\n--- Today\'s Context ---\n') + event.SyncContext.context + chalk.dim('\n-----------------------\n'));
     }
-  }, [push, appendToLast, channel]);
+  }, [push, appendToLast, activeTool]);
 
   // Register with the subscriber set provided by index.tsx.
   // The cleanup function automatically deregisters on unmount or when deps change.
@@ -156,17 +158,13 @@ export default function App({ bridge, channel, initialTool = 'Gemini', subscribe
       setInputValue('');
       setCursorOffset(0);
 
-      // Show in local message list immediately
-      push(chalk.bold(`[you] `) + trimmed + '\n');
+      // Optimistically mark as processing; the bridge echo will display [you] + agent prefix.
       setIsProcessing(true);
 
-      // Prepare first agent line (chunks from AgentChunk will be appended here)
-      push(chalk.green(`[${toolCommandName(activeTool)}] `));
-
-      // Send to bridge
+      // Send to bridge — the echo triggers handleEvent which shows [you] msg + agent prefix.
       bridge.send({ Prompt: { text: trimmed, tool: activeTool, channel } });
     },
-    [history, isProcessing, channel, activeTool, bridge, push],
+    [history, isProcessing, channel, activeTool, bridge],
   );
 
   // --- history navigation ---
