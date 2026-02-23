@@ -18,7 +18,7 @@ pub enum InputMode { Normal, Editing }
 
 pub struct InputState {
     pub text: String,
-    pub cursor_position: usize, // 文字数ベースのインデックス
+    pub cursor_position: usize,
     pub history: Vec<String>,
     pub history_index: Option<usize>,
     pub kill_buffer: String,
@@ -113,7 +113,9 @@ impl InputState {
     pub fn reset(&mut self) -> String {
         let res = self.text.clone();
         if !res.is_empty() {
-            self.history.push(res.clone());
+            if self.history.last() != Some(&res) {
+                self.history.push(res.clone());
+            }
         }
         self.text.clear();
         self.cursor_position = 0;
@@ -169,6 +171,67 @@ pub struct App {
     pub spinner_idx: usize,
 }
 
+impl App {
+    pub fn handle_bus_event(&mut self, event: ProtocolEvent) {
+        match event {
+            ProtocolEvent::SyncContext { context } => {
+                self.messages.push("--- Today's Context ---\n".into());
+                self.messages.extend(context.lines().map(|s| format!("{s}\n")));
+                self.messages.push("-----------------------\n".into());
+            }
+            ProtocolEvent::Prompt { text, channel, .. } => {
+                let channel_name = channel.unwrap_or_else(|| "unknown".into());
+                let msg = format!("[user][{}] {}\n", channel_name, text);
+                if self.messages.last() != Some(&msg) {
+                    self.messages.push("--- (Start) ---\n".into());
+                    self.messages.push(msg);
+                }
+            }
+            ProtocolEvent::AgentChunk { chunk } => {
+                if chunk.is_empty() { return; }
+                let tool_prefix = format!("[{}] ", self.active_cli.command_name());
+                
+                for line in chunk.split_inclusive('\n') {
+                    let mut pushed = false;
+                    if let Some(last) = self.messages.last_mut() {
+                        if last.starts_with(&tool_prefix) && !last.ends_with('\n') {
+                            last.push_str(line);
+                            pushed = true;
+                        }
+                    }
+                    if !pushed {
+                        // 空行バグ抑制：連続する接頭辞のみの行を防ぐ
+                        let is_just_nl = line == "\n";
+                        let prev_is_just_prefix = self.messages.last().map_or(false, |m| m == &format!("{tool_prefix}\n"));
+                        
+                        if is_just_nl && prev_is_just_prefix {
+                            // スキップ
+                        } else {
+                            self.messages.push(format!("{tool_prefix}{line}"));
+                        }
+                    }
+                }
+            }
+            ProtocolEvent::StatusUpdate { is_processing } => { 
+                self.is_processing = is_processing; 
+            }
+            ProtocolEvent::ToolSwitched { tool } => { 
+                self.active_cli = tool; 
+            }
+            ProtocolEvent::SystemMessage { msg, .. } => { 
+                self.messages.push(format!("[System]: {}\n", msg)); 
+            }
+            ProtocolEvent::AgentDone => {
+                self.is_processing = false;
+                if let Some(last) = self.messages.last_mut() {
+                    if !last.ends_with('\n') { last.push('\n'); }
+                }
+                self.messages.push("--- (Done) ---\n".into());
+            }
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum AppEvent {
     Input(event::KeyEvent),
@@ -193,26 +256,8 @@ where <B as Backend>::Error: 'static {
                         app.spinner_idx = (app.spinner_idx + 1) % 10;
                     }
                 }
-                AppEvent::BusEvent(bus_event) => match bus_event {
-                    ProtocolEvent::SyncContext { context } => {
-                        app.messages.push("--- Today's Context ---".into());
-                        app.messages.extend(context.lines().map(|s| s.into()));
-                        app.messages.push("-----------------------".into());
-                    }
-                    ProtocolEvent::Prompt { text, channel, .. } => {
-                        app.messages.push("--- (Start) ---".into());
-                        app.messages.push(format!("[user][{}] {}", channel.unwrap_or_else(|| "unknown".into()), text));
-                    }
-                    ProtocolEvent::AgentLine { line } => {
-                        app.messages.push(format!("[{}] {}", app.active_cli.command_name(), line));
-                    }
-                    ProtocolEvent::StatusUpdate { is_processing } => { app.is_processing = is_processing; }
-                    ProtocolEvent::ToolSwitched { tool } => { app.active_cli = tool; }
-                    ProtocolEvent::SystemMessage { msg, .. } => { app.messages.push(format!("[System]: {}", msg)); }
-                    ProtocolEvent::AgentDone => {
-                        app.is_processing = false;
-                        app.messages.push("--- (Done) ---".into());
-                    }
+                AppEvent::BusEvent(bus_event) => {
+                    app.handle_bus_event(bus_event);
                 }
                 AppEvent::Input(key) => {
                     if key.modifiers.contains(KeyModifiers::CONTROL) {
@@ -244,6 +289,8 @@ where <B as Backend>::Error: 'static {
                             }
                             KeyCode::Up | KeyCode::Char('k') => app.scroll = app.scroll.saturating_sub(1),
                             KeyCode::Down | KeyCode::Char('j') => app.scroll = app.scroll.saturating_add(1),
+                            KeyCode::PageUp => app.scroll = app.scroll.saturating_sub(10),
+                            KeyCode::PageDown => app.scroll = app.scroll.saturating_add(10),
                             _ => {}
                         }
                         InputMode::Editing => match key.code {
@@ -253,6 +300,11 @@ where <B as Backend>::Error: 'static {
                                 } else {
                                     let msg = app.input.reset();
                                     if !msg.is_empty() {
+                                        // 即座にフィードバックを表示
+                                        app.messages.push("--- (Start) ---\n".into());
+                                        app.messages.push(format!("[user][{}] {}\n", app.channel, msg));
+                                        app.is_processing = true;
+                                        
                                         let event = ProtocolEvent::Prompt { text: msg, tool: None, channel: Some(app.channel.clone()) };
                                         if let Ok(j) = serde_json::to_string(&event) { let _ = writer.write_all(format!("{}\n", j).as_bytes()).await; }
                                     }
@@ -270,7 +322,8 @@ where <B as Backend>::Error: 'static {
                     }
                 }
             }
-            app.scroll = app.messages.len().saturating_sub(1) as u16;
+            // スクロール位置を最新に保つ
+            app.scroll = app.messages.iter().map(|m| m.chars().filter(|&c| c == '\n').count()).sum::<usize>() as u16;
         }
     }
 }
@@ -281,12 +334,18 @@ fn render_ui(f: &mut Frame, app: &mut App) {
     let mode_str = if app.is_processing { format!("THINKING {}", spinner_chars[app.spinner_idx]) } else { match app.input_mode { InputMode::Normal => "NORMAL".into(), InputMode::Editing => "INSERT".into() } };
     let header = Paragraph::new(format!(" Mode: {} | CLI: {} | Channel: {}", mode_str, app.active_cli.command_name(), app.channel)).block(Block::default().title(" Status ").borders(Borders::ALL));
     f.render_widget(header, chunks[0]);
+    
     let chat_height = chunks[1].height.saturating_sub(2);
-    let current_scroll = app.scroll.min(app.messages.len().saturating_sub(chat_height as usize) as u16);
-    let chat = Paragraph::new(app.messages.join("\n")).wrap(Wrap { trim: true }).scroll((current_scroll, 0)).block(Block::default().title(" Chat history ").borders(Borders::ALL));
+    let chat_content = app.messages.join("");
+    let total_lines = chat_content.chars().filter(|&c| c == '\n').count();
+    let current_scroll = app.scroll.min(total_lines.saturating_sub(chat_height as usize) as u16);
+    
+    let chat = Paragraph::new(chat_content).wrap(Wrap { trim: false }).scroll((current_scroll, 0)).block(Block::default().title(" Chat history ").borders(Borders::ALL));
     f.render_widget(chat, chunks[1]);
+    
     let input = Paragraph::new(app.input.text.as_str()).style(if let InputMode::Editing = app.input_mode { Style::default().fg(Color::Yellow) } else { Style::default() }).block(Block::default().title(" Input ").borders(Borders::ALL));
     f.render_widget(input, chunks[2]);
+    
     if let (InputMode::Editing, false) = (app.input_mode, app.is_processing) {
         let (row, _col) = app.input.get_cursor_coords();
         let text_before_cursor: String = app.input.text.chars().take(app.input.cursor_position).collect();
@@ -306,9 +365,38 @@ mod tests {
         input.move_cursor_left();
         input.enter_char('c');
         assert_eq!(input.text, "acb");
-        input.kill_line(); // kill "b"
+        input.kill_line();
         assert_eq!(input.text, "ac");
         input.yank();
         assert_eq!(input.text, "acb");
+    }
+
+    #[test]
+    fn test_app_message_handling_clean_output() {
+        let mut app = App {
+            input: InputState::new(),
+            input_mode: InputMode::Normal,
+            messages: Vec::new(),
+            active_cli: AgentTool::Gemini,
+            is_processing: false,
+            scroll: 0,
+            channel: "tui".into(),
+            spinner_idx: 0,
+        };
+
+        app.handle_bus_event(ProtocolEvent::Prompt { text: "test".into(), tool: None, channel: Some("tui".into()) });
+        app.handle_bus_event(ProtocolEvent::AgentChunk { chunk: "Line 1\n".into() });
+        app.handle_bus_event(ProtocolEvent::AgentChunk { chunk: "\n".into() });
+        app.handle_bus_event(ProtocolEvent::AgentChunk { chunk: "\n".into() }); // 連続空行
+        app.handle_bus_event(ProtocolEvent::AgentChunk { chunk: "Line 3".into() });
+        app.handle_bus_event(ProtocolEvent::AgentDone);
+
+        for (i, m) in app.messages.iter().enumerate() {
+            println!("msg[{}]: {:?}", i, m);
+        }
+
+        let empty_gemini_lines = app.messages.iter().filter(|m| m.as_str() == "[gemini] \n" || m.as_str() == "[gemini] ").count();
+        // 連続空行が抑制され、1つだけ [gemini] \n が許可されていることを期待
+        assert!(empty_gemini_lines <= 1, "Too many redundant empty gemini lines found");
     }
 }

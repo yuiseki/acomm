@@ -8,7 +8,8 @@ pub enum ProtocolEvent {
         tool: Option<AgentTool>,
         channel: Option<String>,
     },
-    AgentLine { line: String },
+    /// エージェントからの回答の断片（チャンク）。改行を含む場合も含まない場合もあります。
+    AgentChunk { chunk: String },
     AgentDone,
     SystemMessage { 
         msg: String,
