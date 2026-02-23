@@ -2,128 +2,182 @@
 
 Communication hub for AI agents and human interaction.
 
-`acomm` acts as the nervous system for the `yuiclaw` project, orchestrating multiple AI agent CLIs and providing real-time, multi-channel communication via a bridge architecture.
+`acomm` acts as the nervous system of the `yuiclaw` project, orchestrating AI agent CLIs and providing real-time communication via a bridge + TUI architecture.
 
 - **Bridge Architecture**: Decouples UI clients from agent execution via Unix Domain Sockets.
 - **Real-time Streaming**: Delivers agent responses in chunks as they are generated.
-- **Rich TUI**: Dashboard with CJK support, multiline input, and Emacs-style keybindings.
-- **Unified Protocol**: JSON-based event bus for seamless integration of TUI, CLI, and adapters.
+- **Rich TUI**: CJK-aware multiline input with Emacs keybindings and interactive slash commands.
+- **Unified Protocol**: JSONL event bus connecting TUI, CLI, and adapter channels (ntfy, Slack, Discord).
+- **Multi-channel**: ntfy.sh fully supported; Slack adapter in progress; Discord planned.
+
+## Architecture
+
+```mermaid
+flowchart TD
+    subgraph Clients
+        TUI["acomm-tui\n(TypeScript / Ink)"]
+        ntfy["ntfy adapter\n(src/ntfy.rs)"]
+        slack["Slack adapter\n(src/slack.rs — WIP)"]
+        cli["acomm --publish\nor --subscribe"]
+    end
+
+    subgraph Bridge["acomm --bridge  (src/bridge.rs)"]
+        direction TB
+        sock["/tmp/acomm.sock\nUnix Domain Socket"]
+        bcast["broadcast::Sender\n(tokio)"]
+        state["BridgeState\n(active_tool, active_model,\nbacklog, session_manager)"]
+    end
+
+    acore["acore\nSessionManager"]
+    amem["amem CLI"]
+
+    TUI <-->|JSONL| sock
+    ntfy <-->|JSONL| sock
+    slack <-->|JSONL| sock
+    cli <-->|JSONL| sock
+    sock <--> bcast
+    bcast <--> state
+    state -->|execute_with_resume| acore
+    acore -->|amem today| amem
+```
+
+### Components
+
+- **Bridge** (`src/bridge.rs`) — Central pub/sub hub on `/tmp/acomm.sock`. Receives `Prompt` events, dispatches them to `acore`, and broadcasts `AgentChunk`/`AgentDone` back to all subscribers. Handles slash commands (`/tool`, `/model`, `/clear`, `/search`, `/today`).
+- **TypeScript TUI** (`tui/`) — Primary interactive interface built with [Ink](https://github.com/vadimdemedes/ink). Handles all user interaction including slash command menus.
+- **Rust TUI** (`src/tui.rs`) — Legacy interface (deprecated; kept for backwards compatibility).
+- **ntfy adapter** (`src/ntfy.rs`) — Bidirectional adapter for ntfy.sh push notifications.
+- **Slack adapter** (`src/slack.rs`) — Stub; Socket Mode implementation planned.
 
 ## Install
 
-Build and install from source:
+Install from source (recommended via `yuiclaw` Makefile):
 
 ```bash
-cd /home/yuiseki/Workspaces/repos/acomm
-cargo install --path .
+# From the yuiclaw repo — installs all components including acomm and acomm-tui
+make install
 ```
 
-Run without installing:
+Or install `acomm` directly:
 
 ```bash
-cargo run -q -- --help
+cargo install --path .
+# TypeScript TUI:
+cd tui && npm install && npm link
 ```
 
 ## Usage
 
 ```bash
-acomm --help
+acomm-tui           # Start the TypeScript TUI (preferred)
+acomm               # Start the legacy Rust TUI
+acomm --bridge      # Start bridge only (background hub)
+acomm --publish "Hello"  # Send one message, then exit
+acomm --subscribe   # Stream all events to stdout
 ```
 
-Top-level modes:
+## TUI (acomm-tui)
 
-- **TUI (Default)**: Interactive dashboard.
-- `--bridge`: Background bridge process.
-- `--publish <msg>`: Send a message to the bridge.
-- `--subscribe`: Monitor the bridge message bus.
-- `--dump`: Dump current bridge backlog and exit.
-- `--reset`: Reset bridge backlog and session state.
+### Global keys
 
-Global options:
+| Key | Action |
+|---|---|
+| `q` | Quit (only when input field is empty) |
+| `1` – `4` | Switch tool: Gemini, Claude, Codex, OpenCode |
 
-- `--channel <name>`: Specify communication channel (default: `tui`).
-- `--slack`: Run as a Slack Socket Mode adapter (Milestone 2).
+### Input keys
 
-## Quick Start
+| Key | Action |
+|---|---|
+| `Enter` | Submit message |
+| `Shift+Enter` / `Alt+Enter` / `Ctrl+J` | Insert newline |
+| `Backspace` | Delete character |
+| `← →` | Move cursor |
+| `↑ ↓` | Move to previous/next logical line |
+| `Ctrl+A` / `Home` | Start of line |
+| `Ctrl+E` / `End` | End of line |
+| `Ctrl+P` / `Ctrl+N` | History up / down |
 
-Start the interactive TUI (automatically starts the bridge if not running):
+### Slash commands
 
-```bash
-acomm
-```
+Type these in the input field and press **Enter**:
 
-Subscribe to the conversation from another terminal:
+| Command | Effect |
+|---|---|
+| `/provider` | Open interactive provider selection menu (↑/↓ + Enter to confirm) |
+| `/model` | Open model selection menu for the current provider |
+| `/clear` or `/reset` | Clear local message history and reset the bridge session |
+| `/tool <name>` | Switch provider directly (forwarded to bridge) |
+| `/search <query>` | Search amem memory (forwarded to bridge) |
+| `/today` | Show today's amem snapshot (forwarded to bridge) |
 
-```bash
-acomm --subscribe
-```
+#### Provider selection menu (`/provider`)
 
-Publish a message from a script:
+Displays all available providers. Navigate with `↑`/`↓`, confirm with `Enter`, cancel with `Esc` or `q`. If a session already exists for the selected provider, it is resumed automatically. The amem context is re-injected on the seed turn.
 
-```bash
-acomm --publish "Scan recent logs for errors" --channel abeat
-```
+#### Model selection menu (`/model`)
 
-## Main Commands
+Shows models available for the active provider:
 
-### `acomm (TUI)`
+| Provider | Models |
+|---|---|
+| Gemini | gemini-2.5-flash, gemini-2.5-pro, gemini-2.0-flash |
+| Claude | claude-opus-4-6, claude-sonnet-4-6, claude-haiku-4-5 |
+| Codex | gpt-4o, gpt-4o-mini, o1-mini |
+| OpenCode | default |
 
-The primary interface for interaction.
+## Bridge Slash Commands
 
-- `i`: Enter **INSERT** mode.
-- `Esc`: Back to **NORMAL** mode.
-- `q`: Quit.
-- `1` - `4`: Switch active AI tool (Gemini, Claude, Codex, OpenCode).
-- `PgUp` / `PgDn`: Fast scroll history.
+Commands sent as `Prompt` events starting with `/` are interpreted by the bridge instead of being forwarded to the AI:
 
-#### INSERT Mode Bindings
-- `Ctrl+P` / `Ctrl+N`: Cycle through input history.
-- `Ctrl+A` / `Ctrl+E`: Move cursor to beginning/end of line.
-- `Ctrl+K`: Kill from cursor to end of line.
-- `Ctrl+Y`: Yank last killed text.
-- `Shift+Enter`: Insert newline.
-
-### `acomm --bridge`
-
-Starts the centralized messaging hub. Listens on `/tmp/acomm.sock` by default. Manages:
-- Agent execution via `acore`.
-- Conversation backlog (last 100 events).
-- Session logging to `~/.cache/acomm/sessions/`.
-
-### `acomm --publish <msg>`
-
-One-shot message delivery. Supports stdin via `-`:
-```bash
-echo "Hello" | acomm --publish -
-```
-
-### `acomm --subscribe`
-
-Real-time monitoring of all protocol events. Displays a thinking spinner during agent processing.
+| Command | Bridge action |
+|---|---|
+| `/tool <name>` | Broadcast `ToolSwitched` event |
+| `/model <name>` | Broadcast `ModelSwitched` event |
+| `/clear` | Clear backlog, reset `SessionManager`, reset active model |
+| `/search <query>` | Run `amem search <query>`, broadcast `SystemMessage` with results |
+| `/today` | Run `amem today`, broadcast `SystemMessage` with output |
 
 ## Protocol (JSONL)
 
-Communication with the bridge uses JSONL over Unix Domain Sockets.
+Events exchanged over the Unix socket, one JSON object per line:
 
-- `Prompt`: User input.
-- `AgentChunk`: Streamed response fragment.
-- `AgentDone`: Completion signal.
-- `StatusUpdate`: Processing state (thinking).
-- `SyncContext`: Memory synchronization.
-- `ToolSwitched`: Active tool change.
+| Event | Direction | Fields |
+|---|---|---|
+| `Prompt` | Client → Bridge | `text`, `tool` (nullable), `channel` (nullable) |
+| `AgentChunk` | Bridge → Client | `chunk`, `channel` |
+| `AgentDone` | Bridge → Client | `channel` |
+| `SystemMessage` | Bridge → Client | `msg`, `channel` |
+| `StatusUpdate` | Bridge → Client | `is_processing`, `channel` |
+| `SyncContext` | Bridge → Client | `context` (amem snapshot on connect) |
+| `ToolSwitched` | Bridge → Client | `tool` |
+| `ModelSwitched` | Bridge → Client | `model` |
+
+On connect, the bridge sends:
+1. `SyncContext` (current amem snapshot)
+2. `ToolSwitched` (restore active tool)
+3. `ModelSwitched` (restore active model, if set)
+4. Backlog replay (last 100 events)
 
 ## Runtime Layout
 
-Default cache root: `~/.cache/acomm`
-
-- `~/.cache/acomm/sessions/`: Daily JSONL session logs.
-- `~/.cache/acomm/history.txt`: Persistent TUI input history.
-- `/tmp/acomm.sock`: Unix Domain Socket for bridge communication.
+- `/tmp/acomm.sock` — Unix Domain Socket for bridge communication.
+- `~/.cache/acomm/sessions/` — Daily JSONL session logs.
+- `~/.cache/acomm/history.txt` — Persistent TUI input history.
 
 ## Development
 
 ```bash
+# Rust
 cargo fmt
-cargo test
-cargo build
+cargo test   # 9 Rust tests
+
+# TypeScript TUI
+cd tui
+npm test     # 83 TypeScript tests (vitest)
+npx tsc --noEmit   # type check
 ```
+
+### ADR
+
+- See `docs/ADR/` for architecture decision records.
