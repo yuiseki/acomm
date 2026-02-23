@@ -22,37 +22,14 @@ use tokio::sync::mpsc;
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct CliArgs {
-    /// Run as a background bridge process
-    #[arg(short, long)]
-    bridge: bool,
-
-    /// Send a message to the bridge
-    #[arg(short, long)]
-    publish: Option<String>,
-
-    /// Source channel name
-    #[arg(short, long)]
-    channel: Option<String>,
-
-    /// Subscribe to bridge events and print to stdout (tail -f style)
-    #[arg(short, long, alias = "s")]
-    subscribe: bool,
-
-    /// Dump current backlog and exit
-    #[arg(short, long)]
-    dump: bool,
-
-    /// Reset bridge backlog and exit
-    #[arg(short, long)]
-    reset: bool,
-
-    /// Run as a Slack Socket Mode adapter (Milestone 2)
-    #[arg(long)]
-    slack: bool,
-
-    /// Run as an ntfy.sh adapter
-    #[arg(long)]
-    ntfy: bool,
+    #[arg(short, long)] bridge: bool,
+    #[arg(short, long)] publish: Option<String>,
+    #[arg(short, long)] channel: Option<String>,
+    #[arg(short, long, alias = "s")] subscribe: bool,
+    #[arg(short, long)] dump: bool,
+    #[arg(short, long)] reset: bool,
+    #[arg(long)] slack: bool,
+    #[arg(long)] ntfy: bool,
 }
 
 const SOCKET_PATH: &str = "/tmp/acomm.sock";
@@ -60,23 +37,10 @@ const SOCKET_PATH: &str = "/tmp/acomm.sock";
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let args = CliArgs::parse();
-
-    if args.bridge {
-        return bridge::start_bridge().await;
-    }
-
-    if args.reset {
-        return publish_to_bridge("/clear", Some("bridge")).await;
-    }
-
-    if args.slack {
-        return slack::start_slack_adapter().await;
-    }
-
-    if args.ntfy {
-        return ntfy::start_ntfy_adapter().await;
-    }
-
+    if args.bridge { return bridge::start_bridge().await; }
+    if args.reset { return publish_to_bridge("/clear", Some("bridge")).await; }
+    if args.slack { return slack::start_slack_adapter().await; }
+    if args.ntfy { return ntfy::start_ntfy_adapter().await; }
     if let Some(mut msg) = args.publish {
         if msg == "-" {
             let mut buffer = String::new();
@@ -85,15 +49,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }
         return publish_to_bridge(&msg, args.channel.as_deref()).await;
     }
-
-    if args.dump {
-        return start_dump().await;
-    }
-
-    if args.subscribe {
-        return start_subscribe().await;
-    }
-
+    if args.dump { return start_dump().await; }
+    if args.subscribe { return start_subscribe().await; }
     start_tui(args.channel.as_deref()).await
 }
 
@@ -148,7 +105,7 @@ fn display_event(event: &ProtocolEvent, active_tool_name: &mut String, is_start_
             println!("[user][{}] {}", channel.as_deref().unwrap_or("unknown"), text);
             *is_start_of_line = true;
         }
-        ProtocolEvent::AgentChunk { chunk } => {
+        ProtocolEvent::AgentChunk { chunk, .. } => {
             for line in chunk.split_inclusive('\n') {
                 if *is_start_of_line {
                     print!("[{}] ", active_tool_name);
@@ -158,7 +115,7 @@ fn display_event(event: &ProtocolEvent, active_tool_name: &mut String, is_start_
                 if line.ends_with('\n') { *is_start_of_line = true; }
             }
         }
-        ProtocolEvent::AgentDone => {
+        ProtocolEvent::AgentDone { .. } => {
             if !*is_start_of_line { println!(); }
             println!("--- (Done) ---");
             *is_start_of_line = true;
@@ -192,8 +149,8 @@ async fn start_subscribe() -> Result<(), Box<dyn Error>> {
             line_res = lines.next_line() => {
                 let line = match line_res? { Some(l) => l, None => break };
                 if let Ok(event) = serde_json::from_str::<ProtocolEvent>(&line) {
-                    if matches!(event, ProtocolEvent::StatusUpdate { is_processing: true }) { is_thinking = true; }
-                    else if matches!(event, ProtocolEvent::StatusUpdate { is_processing: false } | ProtocolEvent::AgentChunk { .. } | ProtocolEvent::AgentDone) {
+                    if matches!(event, ProtocolEvent::StatusUpdate { is_processing: true, .. }) { is_thinking = true; }
+                    else if matches!(event, ProtocolEvent::StatusUpdate { is_processing: false, .. } | ProtocolEvent::AgentChunk { .. } | ProtocolEvent::AgentDone { .. }) {
                         if is_thinking { print!("\r\x1B[K"); is_thinking = false; }
                     }
                     display_event(&event, &mut active_tool_name, &mut is_start_of_line)?;

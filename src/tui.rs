@@ -214,10 +214,9 @@ impl App {
                     self.messages.push(msg);
                 }
             }
-            ProtocolEvent::AgentChunk { chunk } => {
+            ProtocolEvent::AgentChunk { chunk, .. } => {
                 if chunk.is_empty() { return; }
                 let tool_prefix = format!("[{}] ", self.active_cli.command_name());
-                
                 for line in chunk.split_inclusive('\n') {
                     let mut pushed = false;
                     if let Some(last) = self.messages.last_mut() {
@@ -230,23 +229,17 @@ impl App {
                         let is_just_nl = line == "\n";
                         let prev_is_just_prefix = self.messages.last().map_or(false, |m| m == &format!("{tool_prefix}\n"));
                         if is_just_nl && prev_is_just_prefix {
-                            // Skip redundant empty prefix lines
+                            // Skip
                         } else {
                             self.messages.push(format!("{tool_prefix}{line}"));
                         }
                     }
                 }
             }
-            ProtocolEvent::StatusUpdate { is_processing } => { 
-                self.is_processing = is_processing; 
-            }
-            ProtocolEvent::ToolSwitched { tool } => { 
-                self.active_cli = tool; 
-            }
-            ProtocolEvent::SystemMessage { msg, .. } => { 
-                self.messages.push(format!("[System]: {}\n", msg)); 
-            }
-            ProtocolEvent::AgentDone => {
+            ProtocolEvent::StatusUpdate { is_processing, .. } => { self.is_processing = is_processing; }
+            ProtocolEvent::ToolSwitched { tool } => { self.active_cli = tool; }
+            ProtocolEvent::SystemMessage { msg, .. } => { self.messages.push(format!("[System]: {}\n", msg)); }
+            ProtocolEvent::AgentDone { .. } => {
                 self.is_processing = false;
                 if let Some(last) = self.messages.last_mut() {
                     if !last.ends_with('\n') { last.push('\n'); }
@@ -403,11 +396,11 @@ mod tests {
         };
 
         app.handle_bus_event(ProtocolEvent::Prompt { text: "test".into(), tool: None, channel: Some("tui".into()) });
-        app.handle_bus_event(ProtocolEvent::AgentChunk { chunk: "Line 1\n".into() });
-        app.handle_bus_event(ProtocolEvent::AgentChunk { chunk: "\n".into() });
-        app.handle_bus_event(ProtocolEvent::AgentChunk { chunk: "\n".into() });
-        app.handle_bus_event(ProtocolEvent::AgentChunk { chunk: "Line 3".into() });
-        app.handle_bus_event(ProtocolEvent::AgentDone);
+        app.handle_bus_event(ProtocolEvent::AgentChunk { chunk: "Line 1\n".into(), channel: Some("tui".into()) });
+        app.handle_bus_event(ProtocolEvent::AgentChunk { chunk: "\n".into(), channel: Some("tui".into()) });
+        app.handle_bus_event(ProtocolEvent::AgentChunk { chunk: "\n".into(), channel: Some("tui".into()) });
+        app.handle_bus_event(ProtocolEvent::AgentChunk { chunk: "Line 3".into(), channel: Some("tui".into()) });
+        app.handle_bus_event(ProtocolEvent::AgentDone { channel: Some("tui".into()) });
 
         for (i, m) in app.messages.iter().enumerate() {
             println!("msg[{}]: {:?}", i, m);

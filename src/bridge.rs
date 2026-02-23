@@ -249,8 +249,8 @@ mod tests {
             }
         }
         
-        assert!(received.iter().any(|e| matches!(e, ProtocolEvent::StatusUpdate { channel: Some(ref c), .. } if c == "test_channel")));
-        assert!(received.iter().any(|e| matches!(e, ProtocolEvent::AgentChunk { channel: Some(ref c), .. } if c == "test_channel")));
-        assert!(received.iter().any(|e| matches!(e, ProtocolEvent::AgentDone { channel: Some(ref c), .. } if c == "test_channel")));
+        assert!(received.iter().any(|e| matches!(e, ProtocolEvent::StatusUpdate { channel: Some(c), .. } if c == "test_channel")));
+        assert!(received.iter().any(|e| matches!(e, ProtocolEvent::AgentChunk { channel: Some(c), .. } if c == "test_channel")));
+        assert!(received.iter().any(|e| matches!(e, ProtocolEvent::AgentDone { channel: Some(c), .. } if c == "test_channel")));
     }
 }
