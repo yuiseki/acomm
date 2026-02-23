@@ -3,6 +3,7 @@ mod bridge;
 mod tui;
 mod slack;
 mod ntfy;
+mod discord;
 
 use acore::AgentTool;
 use clap::Parser;
@@ -36,6 +37,7 @@ struct CliArgs {
     #[arg(short, long)] reset: bool,
     #[arg(long)] slack: bool,
     #[arg(long)] ntfy: bool,
+    #[arg(long)] discord: bool,
 }
 
 const SOCKET_PATH: &str = "/tmp/acomm.sock";
@@ -47,6 +49,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     if args.reset { return publish_to_bridge("/clear", Some("bridge")).await; }
     if args.slack { return slack::start_slack_adapter().await; }
     if args.ntfy { return ntfy::start_ntfy_adapter().await; }
+    if args.discord { return discord::start_discord_adapter().await; }
     if let Some(mut msg) = args.publish {
         if msg == "-" {
             let mut buffer = String::new();
