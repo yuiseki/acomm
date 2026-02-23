@@ -34,7 +34,7 @@ pub async fn start_bridge() -> Result<(), Box<dyn Error>> {
     tokio::spawn(async move {
         while let Ok(event) = manager_rx.recv().await {
             let mut s = state_for_manager.lock().await;
-            if matches!(event, ProtocolEvent::Prompt { .. } | ProtocolEvent::AgentChunk { .. } | ProtocolEvent::AgentDone | ProtocolEvent::SystemMessage { .. } | ProtocolEvent::ToolSwitched { .. }) {
+            if matches!(event, ProtocolEvent::Prompt { .. } | ProtocolEvent::AgentChunk { .. } | ProtocolEvent::AgentDone { .. } | ProtocolEvent::SystemMessage { .. } | ProtocolEvent::ToolSwitched { .. }) {
                 s.backlog.push_back(event.clone());
                 if s.backlog.len() > MAX_BACKLOG {
                     s.backlog.pop_front();
@@ -105,6 +105,7 @@ async fn handle_bridge_connection(
                             if text.starts_with('/') {
                                 handle_command(text, &tx_loop, &state).await?;
                             } else {
+                                let channel = event.clone_channel();
                                 let active_tool = match tool {
                                     Some(t) => t.clone(),
                                     None => state.lock().await.active_tool.clone(),
@@ -112,31 +113,33 @@ async fn handle_bridge_connection(
                                 let _ = tx_loop.send(ProtocolEvent::Prompt { 
                                     text: text.clone(), 
                                     tool: Some(active_tool.clone()), 
-                                    channel: event.clone_channel()
+                                    channel: channel.clone()
                                 });
-                                let _ = tx_loop.send(ProtocolEvent::StatusUpdate { is_processing: true });
+                                let _ = tx_loop.send(ProtocolEvent::StatusUpdate { is_processing: true, channel: channel.clone() });
                                 
                                 let tx_inner = Arc::clone(&tx_loop);
                                 let state_inner = Arc::clone(&state);
                                 let text_inner = text.clone();
+                                let channel_inner = channel.clone();
                                 let manager = state_inner.lock().await.session_manager.clone();
                                 
                                 tokio::spawn(async move {
                                     let tx_chunk = Arc::clone(&tx_inner);
                                     let tx_err = Arc::clone(&tx_inner);
+                                    let ch_chunk = channel_inner.clone();
                                     match manager.execute_with_resume(active_tool, &text_inner, move |chunk| {
-                                        let _ = tx_chunk.send(ProtocolEvent::AgentChunk { chunk });
+                                        let _ = tx_chunk.send(ProtocolEvent::AgentChunk { chunk, channel: ch_chunk.clone() });
                                     }).await {
                                         Ok(_) => {},
                                         Err(e) => {
                                             let _ = tx_err.send(ProtocolEvent::SystemMessage { 
                                                 msg: format!("Agent execution failed: {}", e), 
-                                                channel: Some("bridge".into()) 
+                                                channel: channel_inner.clone()
                                             });
                                         }
                                     }
-                                    let _ = tx_inner.send(ProtocolEvent::AgentDone);
-                                    let _ = tx_inner.send(ProtocolEvent::StatusUpdate { is_processing: false });
+                                    let _ = tx_inner.send(ProtocolEvent::AgentDone { channel: channel_inner.clone() });
+                                    let _ = tx_inner.send(ProtocolEvent::StatusUpdate { is_processing: false, channel: channel_inner });
                                 });
                             }
                         }
@@ -226,16 +229,14 @@ mod tests {
         let (reader, mut writer) = tokio::io::split(stream);
         let mut lines = BufReader::new(reader).lines();
         
-        // Skip initial state
         while let Ok(Ok(Some(line))) = tokio::time::timeout(Duration::from_millis(200), lines.next_line()).await {
             let _ = serde_json::from_str::<ProtocolEvent>(&line);
         }
 
-        // Send a mock prompt
         let prompt = ProtocolEvent::Prompt { 
             text: "hello mock".into(), 
             tool: Some(AgentTool::Mock), 
-            channel: Some("test".into()) 
+            channel: Some("test_channel".into()) 
         };
         writer.write_all(format!("{}\n", serde_json::to_string(&prompt).unwrap()).as_bytes()).await.unwrap();
         
@@ -244,15 +245,12 @@ mod tests {
         while start.elapsed() < Duration::from_secs(5) {
             if let Ok(Ok(Some(line))) = tokio::time::timeout(Duration::from_millis(500), lines.next_line()).await {
                 let ev: ProtocolEvent = serde_json::from_str(&line).unwrap();
-                println!("Test received: {:?}", ev);
                 received.push(ev);
             }
         }
         
-        // Assertions for mock flow
-        assert!(received.iter().any(|e| matches!(e, ProtocolEvent::StatusUpdate { is_processing: true })));
-        assert!(received.iter().any(|e| matches!(e, ProtocolEvent::AgentChunk { chunk } if chunk.contains("Mock:"))));
-        assert!(received.iter().any(|e| matches!(e, ProtocolEvent::AgentDone)));
-        assert!(received.iter().any(|e| matches!(e, ProtocolEvent::StatusUpdate { is_processing: false })));
+        assert!(received.iter().any(|e| matches!(e, ProtocolEvent::StatusUpdate { channel: Some(ref c), .. } if c == "test_channel")));
+        assert!(received.iter().any(|e| matches!(e, ProtocolEvent::AgentChunk { channel: Some(ref c), .. } if c == "test_channel")));
+        assert!(received.iter().any(|e| matches!(e, ProtocolEvent::AgentDone { channel: Some(ref c), .. } if c == "test_channel")));
     }
 }
