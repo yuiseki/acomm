@@ -96,6 +96,8 @@ export default function App({ bridge, channel, initialTool = 'Gemini', subscribe
   // --- tool / processing state ---
   const [activeTool, setActiveTool] = useState<AgentTool>(initialTool);
   const [isProcessing, setIsProcessing] = useState(false);
+  // True from Prompt echo until the first AgentChunk arrives; drives the inline spinner.
+  const [awaitingFirstChunk, setAwaitingFirstChunk] = useState(false);
 
   const [spinnerIdx, setSpinnerIdx] = useState(0);
 
@@ -117,10 +119,15 @@ export default function App({ bridge, channel, initialTool = 'Gemini', subscribe
       // Pre-push agent prefix so incoming AgentChunk events can appendToLast correctly.
       const displayTool = toolCommandName(eventTool ?? activeTool);
       push(chalk.green(`[${displayTool}] `));
+      setAwaitingFirstChunk(true);
     } else if ('AgentChunk' in event) {
       const { chunk } = event.AgentChunk;
-      if (chunk) appendToLast(chunk);
+      if (chunk) {
+        setAwaitingFirstChunk(false);
+        appendToLast(chunk);
+      }
     } else if ('AgentDone' in event) {
+      setAwaitingFirstChunk(false);
       setIsProcessing(false);
       push('\n' + chalk.dim('--- (Done) ---') + '\n');
     } else if ('SystemMessage' in event) {
@@ -131,7 +138,7 @@ export default function App({ bridge, channel, initialTool = 'Gemini', subscribe
       setActiveTool(event.ToolSwitched.tool);
       push(chalk.cyan(`\n[Tool switched → ${event.ToolSwitched.tool}]\n`));
     } else if ('SyncContext' in event) {
-      push(chalk.dim('\n--- Today\'s Context ---\n') + event.SyncContext.context + chalk.dim('\n-----------------------\n'));
+      // Suppress — context is injected into the agent prompt, not shown to the user.
     }
   }, [push, appendToLast, activeTool]);
 
@@ -219,9 +226,7 @@ export default function App({ bridge, channel, initialTool = 'Gemini', subscribe
   });
 
   // --- render ---
-  const statusLine = isProcessing
-    ? chalk.yellow(`${SPINNER[spinnerIdx]} thinking...  [${toolCommandName(activeTool)}]`)
-    : chalk.cyan(`[${toolCommandName(activeTool)}]  q=quit  1-4=switch tool`);
+  const statusLine = chalk.cyan(`[${toolCommandName(activeTool)}]  q=quit  1-4=switch tool`);
 
   return (
     <Box flexDirection="column" height="100%">
@@ -232,9 +237,13 @@ export default function App({ bridge, channel, initialTool = 'Gemini', subscribe
 
       {/* Message history */}
       <Box flexDirection="column" flexGrow={1} overflowY="hidden">
-        {messages.map((m) => (
-          <Text key={m.id}>{m.text}</Text>
-        ))}
+        {messages.map((m, i) => {
+          const isLast = i === messages.length - 1;
+          const displayText = isLast && awaitingFirstChunk
+            ? m.text + chalk.yellow(`${SPINNER[spinnerIdx]} thinking...`)
+            : m.text;
+          return <Text key={m.id}>{displayText}</Text>;
+        })}
       </Box>
 
       {/* Multiline input */}
