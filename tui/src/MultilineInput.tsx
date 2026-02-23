@@ -10,6 +10,7 @@
  *   Up / Down           — move cursor to previous/next logical line
  *   Ctrl+A / Home       — move to start of line
  *   Ctrl+E / End        — move to end of line
+ *   Tab                 — trigger slash command autocomplete (if dropdown is open)
  *   Ctrl+P              — history up
  *   Ctrl+N              — history down
  *
@@ -41,6 +42,10 @@ interface Props {
   onSubmit: (value: string) => void;
   onHistoryUp: () => void;
   onHistoryDown: () => void;
+  /** Called when Tab is pressed; used to confirm a slash command autocomplete. */
+  onTabComplete?: () => void;
+  /** When true, show "Tab=complete" hint instead of history hint. */
+  hasCompletions?: boolean;
 }
 
 export default function MultilineInput({
@@ -54,6 +59,8 @@ export default function MultilineInput({
   onSubmit,
   onHistoryUp,
   onHistoryDown,
+  onTabComplete,
+  hasCompletions = false,
 }: Props): React.JSX.Element {
   const handleInput = useCallback(
     (input: string, key: ReturnType<typeof useInput extends (h: (i: string, k: infer K) => void) => void ? never : never> extends never ? any : any) => {
@@ -145,13 +152,19 @@ export default function MultilineInput({
       // Escape — ignore
       if (key.escape) return;
 
+      // --- Tab — trigger slash command autocomplete ---
+      if (input === '\t') {
+        onTabComplete?.();
+        return;
+      }
+
       // --- regular character input ---
       if (!key.ctrl && !key.meta && input) {
         const next = insertAt(value, cursorOffset, input);
         onChangeValue(next, cursorOffset + input.length);
       }
     },
-    [value, cursorOffset, isProcessing, onChangeCursor, onChangeValue, onSubmit, onHistoryUp, onHistoryDown],
+    [value, cursorOffset, isProcessing, onChangeCursor, onChangeValue, onSubmit, onHistoryUp, onHistoryDown, onTabComplete],
   );
 
   useInput(handleInput as any, { isActive });
@@ -222,6 +235,8 @@ export default function MultilineInput({
 
   const hint = isProcessing
     ? chalk.dim('  thinking...')
+    : hasCompletions
+    ? chalk.dim(`  [${activeTool}]  Tab=complete  Esc=dismiss  Enter=send`)
     : chalk.dim(`  [${activeTool}]  Enter=send  Shift+Enter=newline  Ctrl+P/N=history`);
 
   return (

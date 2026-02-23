@@ -20,7 +20,8 @@ import type { AgentTool, ProtocolEvent } from './protocol.js';
 import { toolCommandName, AGENT_TOOLS, PROVIDER_MODELS } from './protocol.js';
 import MultilineInput from './MultilineInput.js';
 import SelectionMenu from './SelectionMenu.js';
-import { parseSlashCommand } from './slashCommands.js';
+import SlashAutocomplete from './SlashAutocomplete.js';
+import { parseSlashCommand, getSlashCompletions } from './slashCommands.js';
 import { renderMarkdown } from './renderMarkdown.js';
 
 type MenuMode = null | 'provider' | 'model';
@@ -134,6 +135,14 @@ export default function App({ bridge, channel, initialTool = 'Gemini', subscribe
   // --- menu mode state ---
   const [menuMode, setMenuMode] = useState<MenuMode>(null);
   const [menuSelectedIndex, setMenuSelectedIndex] = useState(0);
+
+  // --- slash command autocomplete ---
+  // Completions are derived from inputValue on each render (no extra state needed).
+  // autocompleteIdx tracks which completion is currently highlighted.
+  const [autocompleteIdx, setAutocompleteIdx] = useState(0);
+  // Dismissed state: user pressed Escape to hide the dropdown for the current input.
+  const [autocompleteDismissed, setAutocompleteDismissed] = useState(false);
+
   // True from Prompt echo until the first AgentChunk arrives; drives the inline spinner.
   const [awaitingFirstChunk, setAwaitingFirstChunk] = useState(false);
 
@@ -144,6 +153,25 @@ export default function App({ bridge, channel, initialTool = 'Gemini', subscribe
     const id = setInterval(() => setSpinnerIdx((i) => (i + 1) % SPINNER.length), 100);
     return () => clearInterval(id);
   }, [isProcessing]);
+
+  // Compute slash completions from the current input (derived, not stored in state).
+  const slashCompletions = autocompleteDismissed ? [] : getSlashCompletions(inputValue);
+
+  // Reset autocomplete index when the completion list changes length.
+  useEffect(() => {
+    setAutocompleteIdx(0);
+  }, [slashCompletions.length]);
+
+  // Tab handler: insert the currently selected completion into the input.
+  const handleTabComplete = useCallback(() => {
+    if (slashCompletions.length === 0) return;
+    const cmd = slashCompletions[autocompleteIdx]?.command ?? slashCompletions[0]?.command;
+    if (!cmd) return;
+    const newVal = `/${cmd} `;
+    setInputValue(newVal);
+    setCursorOffset(newVal.length);
+    setAutocompleteDismissed(true);
+  }, [slashCompletions, autocompleteIdx]);
 
   // --- bridge event handler ---
   // Wrapped in useCallback so its identity is stable across renders;
@@ -237,9 +265,10 @@ export default function App({ bridge, channel, initialTool = 'Gemini', subscribe
       saveHistory(next);
       setHistoryIdx(null);
 
-      // Reset input
+      // Reset input and autocomplete state
       setInputValue('');
       setCursorOffset(0);
+      setAutocompleteDismissed(false);
 
       // Optimistically mark as processing; the bridge echo will display [you] + agent prefix.
       setIsProcessing(true);
@@ -318,6 +347,12 @@ export default function App({ bridge, channel, initialTool = 'Gemini', subscribe
     }
 
     // Normal mode
+    // Escape — dismiss slash autocomplete if showing
+    if (key.escape && slashCompletions.length > 0) {
+      setAutocompleteDismissed(true);
+      return;
+    }
+
     // q — quit (only when input is empty)
     if (input === 'q' && !key.ctrl && !key.shift && inputValue === '') {
       bridge.close();
@@ -380,18 +415,27 @@ export default function App({ bridge, channel, initialTool = 'Gemini', subscribe
           selectedIndex={menuSelectedIndex}
         />
       ) : (
-        <MultilineInput
-          value={inputValue}
-          cursorOffset={cursorOffset}
-          isProcessing={isProcessing}
-          activeTool={toolCommandName(activeTool)}
-          isActive={menuMode === null}
-          onChangeCursor={setCursorOffset}
-          onChangeValue={(v, c) => { setInputValue(v); setCursorOffset(c); }}
-          onSubmit={handleSubmit}
-          onHistoryUp={handleHistoryUp}
-          onHistoryDown={handleHistoryDown}
-        />
+        <>
+          {/* Slash command autocomplete dropdown (shown above input when typing '/...') */}
+          <SlashAutocomplete
+            completions={slashCompletions}
+            selectedIndex={autocompleteIdx}
+          />
+          <MultilineInput
+            value={inputValue}
+            cursorOffset={cursorOffset}
+            isProcessing={isProcessing}
+            activeTool={toolCommandName(activeTool)}
+            isActive={menuMode === null}
+            hasCompletions={slashCompletions.length > 0}
+            onChangeCursor={setCursorOffset}
+            onChangeValue={(v, c) => { setInputValue(v); setCursorOffset(c); setAutocompleteDismissed(false); }}
+            onSubmit={handleSubmit}
+            onHistoryUp={handleHistoryUp}
+            onHistoryDown={handleHistoryDown}
+            onTabComplete={handleTabComplete}
+          />
+        </>
       )}
     </Box>
   );
