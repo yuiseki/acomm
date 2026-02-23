@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { supportsLanguage } from 'cli-highlight';
 import { renderMarkdown } from '../renderMarkdown.js';
 
 describe('renderMarkdown', () => {
@@ -76,5 +77,61 @@ describe('renderMarkdown', () => {
   it('returns a string type', () => {
     const result = renderMarkdown('# test\n\nsome text');
     expect(typeof result).toBe('string');
+  });
+
+  // --- Syntax Highlighting (cli-highlight integration) ---
+
+  it('code block without language tag preserves the source code', () => {
+    const result = renderMarkdown('```\nsome plain code\n```');
+    expect(result).toContain('some plain code');
+  });
+
+  it('javascript code block preserves identifiers', () => {
+    const result = renderMarkdown('```javascript\nfunction add(a, b) { return a + b; }\n```');
+    expect(result).toContain('add');
+    expect(result).toContain('return');
+  });
+
+  it('typescript code block preserves type annotations', () => {
+    const result = renderMarkdown('```typescript\nconst x: number = 42;\n```');
+    expect(result).toContain('x');
+    expect(result).toContain('42');
+  });
+
+  it('python code block preserves python keywords', () => {
+    const result = renderMarkdown('```python\ndef greet(name):\n    return f"hello {name}"\n```');
+    expect(result).toContain('greet');
+    expect(result).toContain('return');
+  });
+
+  it('rust code block preserves rust syntax', () => {
+    const result = renderMarkdown('```rust\nfn main() { println!("hello"); }\n```');
+    expect(result).toContain('main');
+    expect(result).toContain('println');
+  });
+
+  it('code block is indented by 4 spaces', () => {
+    const result = renderMarkdown('```\nhello\n```');
+    // Each line in the code block should be prefixed with 4 spaces
+    const lines = result.split('\n').filter((l) => l.includes('hello'));
+    expect(lines.length).toBeGreaterThan(0);
+    expect(lines[0]).toMatch(/^ {4}/);
+  });
+
+  it('supportsLanguage returns true for common languages', () => {
+    expect(supportsLanguage('javascript')).toBe(true);
+    expect(supportsLanguage('typescript')).toBe(true);
+    expect(supportsLanguage('python')).toBe(true);
+    expect(supportsLanguage('rust')).toBe(true);
+    expect(supportsLanguage('bash')).toBe(true);
+  });
+
+  it('supportsLanguage returns false for unknown language', () => {
+    expect(supportsLanguage('notareallanguage12345')).toBe(false);
+  });
+
+  it('unknown language falls back to plain text without error', () => {
+    const result = renderMarkdown('```notareallanguage\nsome code\n```');
+    expect(result).toContain('some code');
   });
 });
