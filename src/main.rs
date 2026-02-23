@@ -1,6 +1,8 @@
 mod protocol;
 mod bridge;
 mod tui;
+mod slack;
+mod ntfy;
 
 use acore::AgentTool;
 use clap::Parser;
@@ -20,12 +22,37 @@ use tokio::sync::mpsc;
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct CliArgs {
-    #[arg(short, long)] bridge: bool,
-    #[arg(short, long)] publish: Option<String>,
-    #[arg(short, long)] channel: Option<String>,
-    #[arg(short, long, alias = "s")] subscribe: bool,
-    #[arg(short, long)] dump: bool,
-    #[arg(short, long)] reset: bool,
+    /// Run as a background bridge process
+    #[arg(short, long)]
+    bridge: bool,
+
+    /// Send a message to the bridge
+    #[arg(short, long)]
+    publish: Option<String>,
+
+    /// Source channel name
+    #[arg(short, long)]
+    channel: Option<String>,
+
+    /// Subscribe to bridge events and print to stdout (tail -f style)
+    #[arg(short, long, alias = "s")]
+    subscribe: bool,
+
+    /// Dump current backlog and exit
+    #[arg(short, long)]
+    dump: bool,
+
+    /// Reset bridge backlog and exit
+    #[arg(short, long)]
+    reset: bool,
+
+    /// Run as a Slack Socket Mode adapter (Milestone 2)
+    #[arg(long)]
+    slack: bool,
+
+    /// Run as an ntfy.sh adapter
+    #[arg(long)]
+    ntfy: bool,
 }
 
 const SOCKET_PATH: &str = "/tmp/acomm.sock";
@@ -33,8 +60,23 @@ const SOCKET_PATH: &str = "/tmp/acomm.sock";
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let args = CliArgs::parse();
-    if args.bridge { return bridge::start_bridge().await; }
-    if args.reset { return publish_to_bridge("/clear", Some("bridge")).await; }
+
+    if args.bridge {
+        return bridge::start_bridge().await;
+    }
+
+    if args.reset {
+        return publish_to_bridge("/clear", Some("bridge")).await;
+    }
+
+    if args.slack {
+        return slack::start_slack_adapter().await;
+    }
+
+    if args.ntfy {
+        return ntfy::start_ntfy_adapter().await;
+    }
+
     if let Some(mut msg) = args.publish {
         if msg == "-" {
             let mut buffer = String::new();
@@ -43,8 +85,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }
         return publish_to_bridge(&msg, args.channel.as_deref()).await;
     }
-    if args.dump { return start_dump().await; }
-    if args.subscribe { return start_subscribe().await; }
+
+    if args.dump {
+        return start_dump().await;
+    }
+
+    if args.subscribe {
+        return start_subscribe().await;
+    }
+
     start_tui(args.channel.as_deref()).await
 }
 

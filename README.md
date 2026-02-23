@@ -1,58 +1,129 @@
-# acomm (Agentic Communication) - v0.0.1 ✨️
+# acomm
 
-`acomm` は、AIエージェントと人間の対話を仲介する、Rust製の多目的通信ハブです。
-OpenClaw派生プロジェクト `yuiclaw` の「神経系」として、TUI、コマンドライン、そして外部チャネル（Slack/Discord等）を統合する **Bridgeアーキテクチャ** を採用しています。
+Communication hub for AI agents and human interaction.
 
-## 🌟 主な特徴
+`acomm` acts as the nervous system for the `yuiclaw` project, orchestrating multiple AI agent CLIs and providing real-time, multi-channel communication via a bridge architecture.
 
-- **Bridge アーキテクチャ**: 中央の `bridge` プロセスが対話の文脈とエージェント（`acore`）の実行を管理し、複数のクライアントにリアルタイムでブロードキャストします。
-- **マルチモーダル・インターフェース**:
-  - **TUI**: 記憶（amem）と連携した、リッチなターミナルチャット画面。
-  - **Publish**: CLIから一過性のメッセージを投げ込む（abeat等の定期実行に最適）。
-  - **Subscribe**: `tail -f` 形式で、執事の思考と発言をリアルタイムに監視。
-- **Zero API Philosophy**: LLMのAPIを直接叩かず、システムにインストール済みの公式CLI（Gemini, Claude, etc.）をラップして動作します。
-- **記憶の同期**: 起動時に `amem` から本日の文脈を自動取得し、対話の終了時にはセッションを要約して記録します。
+- **Bridge Architecture**: Decouples UI clients from agent execution via Unix Domain Sockets.
+- **Real-time Streaming**: Delivers agent responses in chunks as they are generated.
+- **Rich TUI**: Dashboard with CJK support, multiline input, and Emacs-style keybindings.
+- **Unified Protocol**: JSON-based event bus for seamless integration of TUI, CLI, and adapters.
 
-## 🚀 使い方
+## Install
 
-### 1. 執事を目覚めさせる (TUI)
-通常通り実行するだけで、Bridgeがバックグラウンドで自動起動し、対話画面が開きます。
+Build and install from source:
+
 ```bash
-cargo run
+cd /home/yuiseki/Workspaces/repos/acomm
+cargo install --path .
 ```
-- `i`: 入力モード (INSERT)
-- `Esc`: 通常モード (NORMAL)
-- `j` / `k`: 履歴のスクロール
-- `1` ~ `4`: 使用するAIツールの切り替え
-- `/search <query>`: 記憶を検索
-- `/today`: 本日の活動を表示
 
-### 2. 執事の言葉を購読する (Subscribe)
-別のターミナルから、対話のストリームを監視できます。思考プロセス（スピナー）も表示されます。
+Run without installing:
+
 ```bash
-cargo run -- --subscribe
+cargo run -q -- --help
 ```
 
-### 3. 外から話しかける (Publish)
-`abeat` や他のスクリプトから、実行中のTUIへメッセージを届けます。
+## Usage
+
 ```bash
-cargo run -- --publish "お嬢様、お茶の時間です" --channel heartbeat
+acomm --help
 ```
 
-## 🏗 アーキテクチャ
+Top-level modes:
 
-```text
-[abeat] --publish--> [ acomm bridge ] <---Prompt/Event---> [ acomm TUI ]
-                          |
-                          +---execute_stream---> [ acore ] ---> [ Gemini CLI ]
-                          |                                 |--- [ Claude CLI ]
-                          +---read/write-------> [ amem ]
+- **TUI (Default)**: Interactive dashboard.
+- `--bridge`: Background bridge process.
+- `--publish <msg>`: Send a message to the bridge.
+- `--subscribe`: Monitor the bridge message bus.
+- `--dump`: Dump current bridge backlog and exit.
+- `--reset`: Reset bridge backlog and session state.
+
+Global options:
+
+- `--channel <name>`: Specify communication channel (default: `tui`).
+- `--slack`: Run as a Slack Socket Mode adapter (Milestone 2).
+
+## Quick Start
+
+Start the interactive TUI (automatically starts the bridge if not running):
+
+```bash
+acomm
 ```
 
-## 🛠 今後の展望 (v0.0.2+)
-- Slack / Discord アダプターの実装
-- Bridgeのデーモン化（systemd連携）の強化
-- 入力履歴の呼び出し機能
+Subscribe to the conversation from another terminal:
 
----
-*Created with care for the Owner, Yui.*
+```bash
+acomm --subscribe
+```
+
+Publish a message from a script:
+
+```bash
+acomm --publish "Scan recent logs for errors" --channel abeat
+```
+
+## Main Commands
+
+### `acomm (TUI)`
+
+The primary interface for interaction.
+
+- `i`: Enter **INSERT** mode.
+- `Esc`: Back to **NORMAL** mode.
+- `q`: Quit.
+- `1` - `4`: Switch active AI tool (Gemini, Claude, Codex, OpenCode).
+- `PgUp` / `PgDn`: Fast scroll history.
+
+#### INSERT Mode Bindings
+- `Ctrl+P` / `Ctrl+N`: Cycle through input history.
+- `Ctrl+A` / `Ctrl+E`: Move cursor to beginning/end of line.
+- `Ctrl+K`: Kill from cursor to end of line.
+- `Ctrl+Y`: Yank last killed text.
+- `Shift+Enter`: Insert newline.
+
+### `acomm --bridge`
+
+Starts the centralized messaging hub. Listens on `/tmp/acomm.sock` by default. Manages:
+- Agent execution via `acore`.
+- Conversation backlog (last 100 events).
+- Session logging to `~/.cache/acomm/sessions/`.
+
+### `acomm --publish <msg>`
+
+One-shot message delivery. Supports stdin via `-`:
+```bash
+echo "Hello" | acomm --publish -
+```
+
+### `acomm --subscribe`
+
+Real-time monitoring of all protocol events. Displays a thinking spinner during agent processing.
+
+## Protocol (JSONL)
+
+Communication with the bridge uses JSONL over Unix Domain Sockets.
+
+- `Prompt`: User input.
+- `AgentChunk`: Streamed response fragment.
+- `AgentDone`: Completion signal.
+- `StatusUpdate`: Processing state (thinking).
+- `SyncContext`: Memory synchronization.
+- `ToolSwitched`: Active tool change.
+
+## Runtime Layout
+
+Default cache root: `~/.cache/acomm`
+
+- `~/.cache/acomm/sessions/`: Daily JSONL session logs.
+- `~/.cache/acomm/history.txt`: Persistent TUI input history.
+- `/tmp/acomm.sock`: Unix Domain Socket for bridge communication.
+
+## Development
+
+```bash
+cargo fmt
+cargo test
+cargo build
+```
