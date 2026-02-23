@@ -111,7 +111,10 @@ export default function App({ bridge, channel, initialTool = 'Gemini', subscribe
   const handleEvent = useCallback((event: ProtocolEvent) => {
     if ('Prompt' in event) {
       const { text, channel: ch } = event.Prompt;
-      push(chalk.bold(`\n[user][${ch ?? 'unknown'}] `) + text + '\n');
+      // Skip echoes of our own TUI prompts — handleSubmit already shows them locally.
+      // Show prompts from other channels (ntfy, slack, etc.) so they're visible.
+      if (ch === channel) return;
+      push(chalk.bold(`\n[${ch ?? 'unknown'}] `) + text + '\n');
     } else if ('AgentChunk' in event) {
       const { chunk } = event.AgentChunk;
       if (chunk) appendToLast(chunk);
@@ -128,7 +131,7 @@ export default function App({ bridge, channel, initialTool = 'Gemini', subscribe
     } else if ('SyncContext' in event) {
       push(chalk.dim('\n--- Today\'s Context ---\n') + event.SyncContext.context + chalk.dim('\n-----------------------\n'));
     }
-  }, [push, appendToLast]);
+  }, [push, appendToLast, channel]);
 
   // Register with the subscriber set provided by index.tsx.
   // The cleanup function automatically deregisters on unmount or when deps change.
@@ -154,10 +157,10 @@ export default function App({ bridge, channel, initialTool = 'Gemini', subscribe
       setCursorOffset(0);
 
       // Show in local message list immediately
-      push(chalk.bold(`\n--- (Start) ---\n[user][${channel}] `) + trimmed + '\n');
+      push(chalk.bold(`[you] `) + trimmed + '\n');
       setIsProcessing(true);
 
-      // Prepare first agent line
+      // Prepare first agent line (chunks from AgentChunk will be appended here)
       push(chalk.green(`[${toolCommandName(activeTool)}] `));
 
       // Send to bridge

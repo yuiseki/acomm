@@ -15,7 +15,8 @@
   "dependencies": {
     "chalk": "^5.3.0",
     "ink": "npm:@jrichman/ink@6.4.11",
-    "react": "^19.2.4"
+    "react": "^19.2.4",
+    "string-width": "^8.2.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

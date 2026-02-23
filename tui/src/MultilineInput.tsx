@@ -6,22 +6,33 @@
  *   Shift+Enter         — insert newline  (requires @jrichman/ink which exposes key.shift)
  *   Alt+Enter / Ctrl+J  — insert newline  (fallback for terminals without Kitty protocol)
  *   Backspace           — delete character before cursor
- *   Left / Right        — move cursor horizontally
- *   Up / Down           — move cursor vertically across lines
+ *   Left / Right        — move cursor horizontally (by one code point)
+ *   Up / Down           — move cursor to previous/next logical line
  *   Ctrl+A / Home       — move to start of line
  *   Ctrl+E / End        — move to end of line
  *   Ctrl+P              — history up
  *   Ctrl+N              — history down
+ *
+ * Japanese / CJK support:
+ *   Each full-width character occupies 2 terminal columns. This component
+ *   manually wraps input text at the available column width using string-width
+ *   so that Japanese input never causes horizontal overflow.
  */
 
 import React, { useCallback } from 'react';
 import { Box, Text, useInput } from 'ink';
 import chalk from 'chalk';
-import { insertAt, deleteCharBefore, offsetToRowCol, rowColToOffset } from './textHelpers.js';
+import {
+  insertAt,
+  deleteCharBefore,
+  offsetToRowCol,
+  rowColToOffset,
+  wrapLine,
+} from './textHelpers.js';
 
 interface Props {
   value: string;
-  cursorOffset: number; // byte offset into value
+  cursorOffset: number; // UTF-16 code-unit offset into value
   isProcessing: boolean;
   activeTool: string;
   onChangeCursor: (offset: number) => void;
@@ -74,11 +85,22 @@ export default function MultilineInput({
 
       // --- cursor movement ---
       if (key.leftArrow) {
-        onChangeCursor(Math.max(0, cursorOffset - 1));
+        if (cursorOffset > 0) {
+          // Move back one code point
+          const before = value.slice(0, cursorOffset);
+          const cps = Array.from(before);
+          const newBefore = cps.slice(0, -1).join('');
+          onChangeCursor(newBefore.length);
+        }
         return;
       }
       if (key.rightArrow) {
-        onChangeCursor(Math.min(value.length, cursorOffset + 1));
+        if (cursorOffset < value.length) {
+          // Move forward one code point
+          const rest = value.slice(cursorOffset);
+          const nextCp = Array.from(rest)[0] ?? '';
+          onChangeCursor(cursorOffset + nextCp.length);
+        }
         return;
       }
       if (key.upArrow) {
@@ -132,9 +154,69 @@ export default function MultilineInput({
 
   useInput(handleInput as any);
 
-  // Render each line; highlight the character at the cursor position
+  // ---------------------------------------------------------------------------
+  // Visual rendering with full-width (CJK) aware line wrapping
+  // ---------------------------------------------------------------------------
+
+  // Available text width: terminal columns minus border(2) + paddingLeft(1) + safety(1)
+  const inputWidth = Math.max(20, (process.stdout.columns ?? 80) - 4);
+
   const lines = value.split('\n');
   const [cursorRow, cursorCol] = offsetToRowCol(value, cursorOffset);
+
+  // Convert UTF-16 col to code-point index within the cursor's logical line
+  const cursorLine = lines[cursorRow] ?? '';
+  const cursorCpIdx = Array.from(cursorLine.slice(0, cursorCol)).length;
+
+  // Build visual rows: each logical line is wrapped into VisualChunks
+  const visualRows: React.JSX.Element[] = [];
+
+  lines.forEach((line, row) => {
+    const chunks = wrapLine(line, inputWidth);
+    const isCurrentRow = row === cursorRow;
+
+    chunks.forEach((chunk, ci) => {
+      const key = `${row}-${ci}`;
+      const isLastChunk = ci === chunks.length - 1;
+
+      if (!isCurrentRow) {
+        visualRows.push(
+          <Box key={key} height={1}>
+            <Text>{chunk.text || ' '}</Text>
+          </Box>,
+        );
+        return;
+      }
+
+      // Determine if cursor falls in this chunk
+      const cursorInChunk =
+        cursorCpIdx >= chunk.startCpIdx && cursorCpIdx < chunk.endCpIdx;
+      const cursorAtEnd = isLastChunk && cursorCpIdx >= chunk.endCpIdx;
+
+      if (cursorInChunk || cursorAtEnd) {
+        const relIdx = cursorCpIdx - chunk.startCpIdx;
+        const cps = Array.from(chunk.text);
+        const before = cps.slice(0, relIdx).join('');
+        const cursorChar = cps[relIdx] ?? ' ';
+        const after = cps.slice(relIdx + 1).join('');
+        visualRows.push(
+          <Box key={key} height={1}>
+            <Text>
+              {before}
+              {chalk.inverse(cursorChar)}
+              {after}
+            </Text>
+          </Box>,
+        );
+      } else {
+        visualRows.push(
+          <Box key={key} height={1}>
+            <Text>{chunk.text}</Text>
+          </Box>,
+        );
+      }
+    });
+  });
 
   const hint = isProcessing
     ? chalk.dim('  thinking...')
@@ -143,22 +225,7 @@ export default function MultilineInput({
   return (
     <Box flexDirection="column" borderStyle="single" borderColor={isProcessing ? 'yellow' : 'cyan'}>
       <Box flexDirection="column" paddingLeft={1}>
-        {lines.map((line, row) => {
-          if (row !== cursorRow) {
-            return <Text key={row}>{line || ' '}</Text>;
-          }
-          // Render cursor on the correct column
-          const before = line.slice(0, cursorCol);
-          const cursorChar = line[cursorCol] ?? ' ';
-          const after = line.slice(cursorCol + 1);
-          return (
-            <Text key={row}>
-              {before}
-              {chalk.inverse(cursorChar)}
-              {after}
-            </Text>
-          );
-        })}
+        {visualRows}
       </Box>
       <Text>{hint}</Text>
     </Box>
