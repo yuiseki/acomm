@@ -35,6 +35,7 @@ interface Props {
   cursorOffset: number; // UTF-16 code-unit offset into value
   isProcessing: boolean;
   activeTool: string;
+  isActive?: boolean; // when false, input handling is suspended (e.g. during menu mode)
   onChangeCursor: (offset: number) => void;
   onChangeValue: (value: string, cursor: number) => void;
   onSubmit: (value: string) => void;
@@ -47,6 +48,7 @@ export default function MultilineInput({
   cursorOffset,
   isProcessing,
   activeTool,
+  isActive = true,
   onChangeCursor,
   onChangeValue,
   onSubmit,
@@ -152,7 +154,7 @@ export default function MultilineInput({
     [value, cursorOffset, isProcessing, onChangeCursor, onChangeValue, onSubmit, onHistoryUp, onHistoryDown],
   );
 
-  useInput(handleInput as any);
+  useInput(handleInput as any, { isActive });
 
   // ---------------------------------------------------------------------------
   // Visual rendering with full-width (CJK) aware line wrapping

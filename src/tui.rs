@@ -259,6 +259,10 @@ impl App {
                 self.messages.push("--- (Done) ---\n".into());
                 if self.auto_scroll { self.scroll_to_bottom(); }
             }
+            ProtocolEvent::ModelSwitched { model } => {
+                self.messages.push(format!("[Model switched → {}]\n", model));
+                if self.auto_scroll { self.scroll_to_bottom(); }
+            }
         }
     }
 

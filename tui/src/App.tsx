@@ -17,8 +17,12 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Bridge } from './bridge.js';
 import type { AgentTool, ProtocolEvent } from './protocol.js';
-import { toolCommandName, AGENT_TOOLS } from './protocol.js';
+import { toolCommandName, AGENT_TOOLS, PROVIDER_MODELS } from './protocol.js';
 import MultilineInput from './MultilineInput.js';
+import SelectionMenu from './SelectionMenu.js';
+import { parseSlashCommand } from './slashCommands.js';
+
+type MenuMode = null | 'provider' | 'model';
 
 // ---------- history helpers ----------
 
@@ -95,7 +99,12 @@ export default function App({ bridge, channel, initialTool = 'Gemini', subscribe
 
   // --- tool / processing state ---
   const [activeTool, setActiveTool] = useState<AgentTool>(initialTool);
+  const [activeModel, setActiveModel] = useState<string>(PROVIDER_MODELS[initialTool][0] ?? '');
   const [isProcessing, setIsProcessing] = useState(false);
+
+  // --- menu mode state ---
+  const [menuMode, setMenuMode] = useState<MenuMode>(null);
+  const [menuSelectedIndex, setMenuSelectedIndex] = useState(0);
   // True from Prompt echo until the first AgentChunk arrives; drives the inline spinner.
   const [awaitingFirstChunk, setAwaitingFirstChunk] = useState(false);
 
@@ -135,8 +144,14 @@ export default function App({ bridge, channel, initialTool = 'Gemini', subscribe
     } else if ('StatusUpdate' in event) {
       setIsProcessing(event.StatusUpdate.is_processing);
     } else if ('ToolSwitched' in event) {
-      setActiveTool(event.ToolSwitched.tool);
-      push(chalk.cyan(`\n[Tool switched → ${event.ToolSwitched.tool}]\n`));
+      const newTool = event.ToolSwitched.tool;
+      setActiveTool(newTool);
+      // Reset model to the first available model for the new tool
+      setActiveModel(PROVIDER_MODELS[newTool][0] ?? '');
+      push(chalk.cyan(`\n[Tool switched → ${newTool}]\n`));
+    } else if ('ModelSwitched' in event) {
+      setActiveModel(event.ModelSwitched.model);
+      push(chalk.cyan(`\n[Model switched → ${event.ModelSwitched.model}]\n`));
     } else if ('SyncContext' in event) {
       // Suppress — context is injected into the agent prompt, not shown to the user.
     }
@@ -154,6 +169,32 @@ export default function App({ bridge, channel, initialTool = 'Gemini', subscribe
     (text: string) => {
       const trimmed = text.trim();
       if (!trimmed || isProcessing) return;
+
+      // Parse slash commands before sending to bridge
+      const action = parseSlashCommand(trimmed);
+      if (action) {
+        // Reset input immediately for all slash commands
+        setInputValue('');
+        setCursorOffset(0);
+
+        if (action.type === 'provider') {
+          setMenuSelectedIndex(0);
+          setMenuMode('provider');
+          return;
+        }
+        if (action.type === 'model') {
+          setMenuSelectedIndex(0);
+          setMenuMode('model');
+          return;
+        }
+        if (action.type === 'clear') {
+          // Clear local messages and reset bridge session
+          setMessages([]);
+          bridge.send({ Prompt: { text: '/clear', tool: null, channel: null } });
+          return;
+        }
+        // bridge-forward: fall through to normal submission below (trimmed is action.text)
+      }
 
       // Save to history
       const next = history[history.length - 1] === trimmed ? history : [...history, trimmed];
@@ -208,8 +249,40 @@ export default function App({ bridge, channel, initialTool = 'Gemini', subscribe
     }
   }, [history, historyIdx]);
 
-  // --- global keys (q to quit, 1-4 for tool switch) ---
+  // --- global keys (q to quit, 1-4 for tool switch; menu navigation when in menu mode) ---
   useInput((input, key) => {
+    // Menu mode: intercept all navigation and selection keys
+    if (menuMode !== null) {
+      if (key.upArrow) {
+        setMenuSelectedIndex((i) => Math.max(0, i - 1));
+        return;
+      }
+      if (key.downArrow) {
+        const count = menuMode === 'provider' ? AGENT_TOOLS.length : PROVIDER_MODELS[activeTool].length;
+        setMenuSelectedIndex((i) => Math.min(count - 1, i + 1));
+        return;
+      }
+      if (key.return) {
+        if (menuMode === 'provider') {
+          const tool = AGENT_TOOLS[menuSelectedIndex]!;
+          bridge.send({ Prompt: { text: `/tool ${toolCommandName(tool)}`, tool: null, channel: null } });
+        } else if (menuMode === 'model') {
+          const model = PROVIDER_MODELS[activeTool][menuSelectedIndex];
+          if (model) {
+            bridge.send({ Prompt: { text: `/model ${model}`, tool: null, channel: null } });
+          }
+        }
+        setMenuMode(null);
+        return;
+      }
+      if (key.escape || input === 'q') {
+        setMenuMode(null);
+        return;
+      }
+      return; // Swallow all other keys in menu mode
+    }
+
+    // Normal mode
     // q — quit (only when input is empty)
     if (input === 'q' && !key.ctrl && !key.shift && inputValue === '') {
       bridge.close();
@@ -226,7 +299,21 @@ export default function App({ bridge, channel, initialTool = 'Gemini', subscribe
   });
 
   // --- render ---
-  const statusLine = chalk.cyan(`[${toolCommandName(activeTool)}]  q=quit  1-4=switch tool`);
+  const modelLabel = activeModel ? `/${activeModel}` : '';
+  const statusLine = chalk.cyan(
+    `[${toolCommandName(activeTool)}${modelLabel}]  q=quit  1-4=switch tool  /provider  /model  /clear`,
+  );
+
+  // Menu items for current mode
+  const menuItems =
+    menuMode === 'provider'
+      ? AGENT_TOOLS.map((t, i) => `${i + 1}. ${toolCommandName(t)}`)
+      : menuMode === 'model'
+      ? PROVIDER_MODELS[activeTool].map((m, i) => `${i + 1}. ${m}`)
+      : [];
+
+  const menuTitle =
+    menuMode === 'provider' ? 'Select provider' : 'Select model';
 
   return (
     <Box flexDirection="column" height="100%">
@@ -246,18 +333,27 @@ export default function App({ bridge, channel, initialTool = 'Gemini', subscribe
         })}
       </Box>
 
-      {/* Multiline input */}
-      <MultilineInput
-        value={inputValue}
-        cursorOffset={cursorOffset}
-        isProcessing={isProcessing}
-        activeTool={toolCommandName(activeTool)}
-        onChangeCursor={setCursorOffset}
-        onChangeValue={(v, c) => { setInputValue(v); setCursorOffset(c); }}
-        onSubmit={handleSubmit}
-        onHistoryUp={handleHistoryUp}
-        onHistoryDown={handleHistoryDown}
-      />
+      {/* Selection menu overlay (shown instead of input during menu mode) */}
+      {menuMode !== null ? (
+        <SelectionMenu
+          title={menuTitle}
+          items={menuItems}
+          selectedIndex={menuSelectedIndex}
+        />
+      ) : (
+        <MultilineInput
+          value={inputValue}
+          cursorOffset={cursorOffset}
+          isProcessing={isProcessing}
+          activeTool={toolCommandName(activeTool)}
+          isActive={menuMode === null}
+          onChangeCursor={setCursorOffset}
+          onChangeValue={(v, c) => { setInputValue(v); setCursorOffset(c); }}
+          onSubmit={handleSubmit}
+          onHistoryUp={handleHistoryUp}
+          onHistoryDown={handleHistoryDown}
+        />
+      )}
     </Box>
   );
 }

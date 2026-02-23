@@ -10,6 +10,7 @@ const MAX_BACKLOG: usize = 100;
 
 pub struct BridgeState {
     pub active_tool: AgentTool,
+    pub active_model: Option<String>,
     pub backlog: VecDeque<ProtocolEvent>,
     pub session_manager: SessionManager,
 }
@@ -25,6 +26,7 @@ pub async fn start_bridge() -> Result<(), Box<dyn Error>> {
     
     let state = Arc::new(Mutex::new(BridgeState {
         active_tool: AgentTool::Gemini,
+        active_model: None,
         backlog: VecDeque::new(),
         session_manager: SessionManager::new(),
     }));
@@ -34,7 +36,14 @@ pub async fn start_bridge() -> Result<(), Box<dyn Error>> {
     tokio::spawn(async move {
         while let Ok(event) = manager_rx.recv().await {
             let mut s = state_for_manager.lock().await;
-            if matches!(event, ProtocolEvent::Prompt { .. } | ProtocolEvent::AgentChunk { .. } | ProtocolEvent::AgentDone { .. } | ProtocolEvent::SystemMessage { .. } | ProtocolEvent::ToolSwitched { .. }) {
+            if matches!(event,
+                ProtocolEvent::Prompt { .. }
+                | ProtocolEvent::AgentChunk { .. }
+                | ProtocolEvent::AgentDone { .. }
+                | ProtocolEvent::SystemMessage { .. }
+                | ProtocolEvent::ToolSwitched { .. }
+                | ProtocolEvent::ModelSwitched { .. }
+            ) {
                 s.backlog.push_back(event.clone());
                 if s.backlog.len() > MAX_BACKLOG {
                     s.backlog.pop_front();
@@ -42,6 +51,11 @@ pub async fn start_bridge() -> Result<(), Box<dyn Error>> {
             }
             if let ProtocolEvent::ToolSwitched { ref tool } = event {
                 s.active_tool = tool.clone();
+                // Reset model selection when tool changes
+                s.active_model = None;
+            }
+            if let ProtocolEvent::ModelSwitched { ref model } = event {
+                s.active_model = Some(model.clone());
             }
         }
     });
@@ -84,6 +98,11 @@ async fn handle_bridge_connection(
         let tool_event = ProtocolEvent::ToolSwitched { tool: s.active_tool.clone() };
         initial_payload.push_str(&serde_json::to_string(&tool_event)?);
         initial_payload.push('\n');
+        if let Some(ref model) = s.active_model {
+            let model_event = ProtocolEvent::ModelSwitched { model: model.clone() };
+            initial_payload.push_str(&serde_json::to_string(&model_event)?);
+            initial_payload.push('\n');
+        }
         for event in &s.backlog {
             initial_payload.push_str(&serde_json::to_string(event)?);
             initial_payload.push('\n');
@@ -200,10 +219,16 @@ async fn handle_command(
                 let _ = tx.send(ProtocolEvent::ToolSwitched { tool });
             }
         }
+        "model" => {
+            if let Some(model_name) = parts.get(1) {
+                let _ = tx.send(ProtocolEvent::ModelSwitched { model: model_name.to_string() });
+            }
+        }
         "clear" => {
             let mut s = state.lock().await;
             s.backlog.clear();
             s.session_manager = SessionManager::new();
+            s.active_model = None;
             let _ = tx.send(ProtocolEvent::SystemMessage { msg: "Cleared.".into(), channel: Some("bridge".into()) });
         }
         _ => {}

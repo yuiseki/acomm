@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { eventKind, toolCommandName, AGENT_TOOLS } from '../protocol.js';
-import type { ProtocolEvent } from '../protocol.js';
+import { eventKind, toolCommandName, AGENT_TOOLS, PROVIDER_MODELS } from '../protocol.js';
+import type { ProtocolEvent, AgentTool } from '../protocol.js';
 
 describe('eventKind', () => {
   it('returns "Prompt" for a Prompt event', () => {
@@ -51,4 +51,47 @@ describe('AGENT_TOOLS', () => {
   it('contains exactly 4 tools', () => expect(AGENT_TOOLS).toHaveLength(4));
   it('does not include Mock (internal only)', () => expect(AGENT_TOOLS).not.toContain('Mock'));
   it('starts with Gemini', () => expect(AGENT_TOOLS[0]).toBe('Gemini'));
+});
+
+describe('PROVIDER_MODELS', () => {
+  it('has an entry for every AGENT_TOOL', () => {
+    for (const tool of AGENT_TOOLS) {
+      expect(PROVIDER_MODELS).toHaveProperty(tool);
+    }
+  });
+
+  it('each entry is a non-empty array of strings', () => {
+    for (const tool of AGENT_TOOLS) {
+      const models = PROVIDER_MODELS[tool as AgentTool];
+      expect(Array.isArray(models)).toBe(true);
+      expect(models.length).toBeGreaterThan(0);
+      for (const m of models) {
+        expect(typeof m).toBe('string');
+        expect(m.length).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('Gemini has at least one model', () => {
+    expect(PROVIDER_MODELS['Gemini'].length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('Claude has at least one model', () => {
+    expect(PROVIDER_MODELS['Claude'].length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('Codex has at least one model', () => {
+    expect(PROVIDER_MODELS['Codex'].length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('OpenCode has at least one model', () => {
+    expect(PROVIDER_MODELS['OpenCode'].length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe('ModelSwitched event', () => {
+  it('is recognized by eventKind', () => {
+    const e: ProtocolEvent = { ModelSwitched: { model: 'gemini-2.5-flash' } };
+    expect(eventKind(e)).toBe('ModelSwitched');
+  });
 });
