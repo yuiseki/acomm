@@ -8,7 +8,7 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Wrap},
     Frame, Terminal,
 };
-use std::error::Error;
+use std::{error::Error, fs, path::PathBuf};
 use tokio::sync::mpsc;
 use tokio::io::AsyncWriteExt;
 use unicode_width::UnicodeWidthStr;
@@ -26,12 +26,38 @@ pub struct InputState {
 
 impl InputState {
     pub fn new() -> Self {
+        let mut history = Vec::new();
+        if let Some(path) = Self::history_path() {
+            if path.exists() {
+                if let Ok(content) = fs::read_to_string(path) {
+                    history = content.lines().map(|s| s.to_string()).collect();
+                }
+            }
+        }
         Self { 
             text: String::new(), 
             cursor_position: 0,
-            history: Vec::new(),
+            history,
             history_index: None,
             kill_buffer: String::new(),
+        }
+    }
+
+    fn history_path() -> Option<PathBuf> {
+        dirs::cache_dir().map(|mut p| {
+            p.push("acomm");
+            p.push("history.txt");
+            p
+        })
+    }
+
+    fn save_history(&self) {
+        if let Some(path) = Self::history_path() {
+            if let Some(parent) = path.parent() {
+                let _ = fs::create_dir_all(parent);
+            }
+            let content = self.history.join("\n");
+            let _ = fs::write(path, content);
         }
     }
 
@@ -115,6 +141,7 @@ impl InputState {
         if !res.is_empty() {
             if self.history.last() != Some(&res) {
                 self.history.push(res.clone());
+                self.save_history();
             }
         }
         self.text.clear();
@@ -200,12 +227,10 @@ impl App {
                         }
                     }
                     if !pushed {
-                        // 空行バグ抑制：連続する接頭辞のみの行を防ぐ
                         let is_just_nl = line == "\n";
                         let prev_is_just_prefix = self.messages.last().map_or(false, |m| m == &format!("{tool_prefix}\n"));
-                        
                         if is_just_nl && prev_is_just_prefix {
-                            // スキップ
+                            // Skip redundant empty prefix lines
                         } else {
                             self.messages.push(format!("{tool_prefix}{line}"));
                         }
@@ -300,11 +325,9 @@ where <B as Backend>::Error: 'static {
                                 } else {
                                     let msg = app.input.reset();
                                     if !msg.is_empty() {
-                                        // 即座にフィードバックを表示
                                         app.messages.push("--- (Start) ---\n".into());
                                         app.messages.push(format!("[user][{}] {}\n", app.channel, msg));
                                         app.is_processing = true;
-                                        
                                         let event = ProtocolEvent::Prompt { text: msg, tool: None, channel: Some(app.channel.clone()) };
                                         if let Ok(j) = serde_json::to_string(&event) { let _ = writer.write_all(format!("{}\n", j).as_bytes()).await; }
                                     }
@@ -322,7 +345,6 @@ where <B as Backend>::Error: 'static {
                     }
                 }
             }
-            // スクロール位置を最新に保つ
             app.scroll = app.messages.iter().map(|m| m.chars().filter(|&c| c == '\n').count()).sum::<usize>() as u16;
         }
     }
@@ -334,18 +356,14 @@ fn render_ui(f: &mut Frame, app: &mut App) {
     let mode_str = if app.is_processing { format!("THINKING {}", spinner_chars[app.spinner_idx]) } else { match app.input_mode { InputMode::Normal => "NORMAL".into(), InputMode::Editing => "INSERT".into() } };
     let header = Paragraph::new(format!(" Mode: {} | CLI: {} | Channel: {}", mode_str, app.active_cli.command_name(), app.channel)).block(Block::default().title(" Status ").borders(Borders::ALL));
     f.render_widget(header, chunks[0]);
-    
     let chat_height = chunks[1].height.saturating_sub(2);
     let chat_content = app.messages.join("");
     let total_lines = chat_content.chars().filter(|&c| c == '\n').count();
     let current_scroll = app.scroll.min(total_lines.saturating_sub(chat_height as usize) as u16);
-    
     let chat = Paragraph::new(chat_content).wrap(Wrap { trim: false }).scroll((current_scroll, 0)).block(Block::default().title(" Chat history ").borders(Borders::ALL));
     f.render_widget(chat, chunks[1]);
-    
     let input = Paragraph::new(app.input.text.as_str()).style(if let InputMode::Editing = app.input_mode { Style::default().fg(Color::Yellow) } else { Style::default() }).block(Block::default().title(" Input ").borders(Borders::ALL));
     f.render_widget(input, chunks[2]);
-    
     if let (InputMode::Editing, false) = (app.input_mode, app.is_processing) {
         let (row, _col) = app.input.get_cursor_coords();
         let text_before_cursor: String = app.input.text.chars().take(app.input.cursor_position).collect();
@@ -387,7 +405,7 @@ mod tests {
         app.handle_bus_event(ProtocolEvent::Prompt { text: "test".into(), tool: None, channel: Some("tui".into()) });
         app.handle_bus_event(ProtocolEvent::AgentChunk { chunk: "Line 1\n".into() });
         app.handle_bus_event(ProtocolEvent::AgentChunk { chunk: "\n".into() });
-        app.handle_bus_event(ProtocolEvent::AgentChunk { chunk: "\n".into() }); // 連続空行
+        app.handle_bus_event(ProtocolEvent::AgentChunk { chunk: "\n".into() });
         app.handle_bus_event(ProtocolEvent::AgentChunk { chunk: "Line 3".into() });
         app.handle_bus_event(ProtocolEvent::AgentDone);
 
@@ -396,7 +414,6 @@ mod tests {
         }
 
         let empty_gemini_lines = app.messages.iter().filter(|m| m.as_str() == "[gemini] \n" || m.as_str() == "[gemini] ").count();
-        // 連続空行が抑制され、1つだけ [gemini] \n が許可されていることを期待
         assert!(empty_gemini_lines <= 1, "Too many redundant empty gemini lines found");
     }
 }

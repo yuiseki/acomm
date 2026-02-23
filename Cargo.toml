@@ -8,6 +8,7 @@ acore = { version = "0.1.0", path = "../acore" }
 chrono = "0.4.43"
 clap = { version = "4.5.60", features = ["derive"] }
 crossterm = "0.29.0"
+dirs = "6.0.0"
 futures-core = "0.3.32"
 futures-util = "0.3.32"
 ratatui = "0.30.0"
