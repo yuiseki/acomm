@@ -21,10 +21,12 @@ import { toolCommandName, AGENT_TOOLS, PROVIDER_MODELS } from './protocol.js';
 import MultilineInput from './MultilineInput.js';
 import SelectionMenu from './SelectionMenu.js';
 import SlashAutocomplete from './SlashAutocomplete.js';
+import SessionBrowser from './SessionBrowser.js';
 import { parseSlashCommand, getSlashCompletions } from './slashCommands.js';
 import { renderMarkdown } from './renderMarkdown.js';
+import { saveSessionTurn, loadRecentTurns, type SessionTurn } from './sessionStorage.js';
 
-type MenuMode = null | 'provider' | 'model';
+type MenuMode = null | 'provider' | 'model' | 'session';
 
 // ---------- history helpers ----------
 
@@ -136,6 +138,11 @@ export default function App({ bridge, channel, initialTool = 'Gemini', subscribe
   const [menuMode, setMenuMode] = useState<MenuMode>(null);
   const [menuSelectedIndex, setMenuSelectedIndex] = useState(0);
 
+  // --- session browser ---
+  const [sessionTurns, setSessionTurns] = useState<SessionTurn[]>([]);
+  // Tracks the current in-progress conversation turn for saving on AgentDone.
+  const currentTurnRef = useRef<{ prompt: string; response: string } | null>(null);
+
   // --- slash command autocomplete ---
   // Completions are derived from inputValue on each render (no extra state needed).
   // autocompleteIdx tracks which completion is currently highlighted.
@@ -190,17 +197,37 @@ export default function App({ bridge, channel, initialTool = 'Gemini', subscribe
         isStreaming: true,
       });
       setAwaitingFirstChunk(true);
+      // Begin tracking this turn for session persistence.
+      currentTurnRef.current = { prompt: text, response: '' };
     } else if ('AgentChunk' in event) {
       const { chunk } = event.AgentChunk;
       if (chunk) {
         setAwaitingFirstChunk(false);
         appendToLast(chunk);
+        // Accumulate response for session persistence.
+        if (currentTurnRef.current) {
+          currentTurnRef.current.response += chunk;
+        }
       }
     } else if ('AgentDone' in event) {
       setAwaitingFirstChunk(false);
       setIsProcessing(false);
       // Mark the agent message complete so markdown rendering activates.
       markLastComplete();
+      // Persist the completed turn.
+      if (currentTurnRef.current) {
+        const { prompt, response } = currentTurnRef.current;
+        if (prompt && response.trim()) {
+          saveSessionTurn({
+            timestamp: new Date().toISOString(),
+            tool: activeTool,
+            model: activeModel,
+            prompt,
+            response,
+          });
+        }
+        currentTurnRef.current = null;
+      }
       push('\n' + chalk.dim('--- (Done) ---') + '\n');
     } else if ('SystemMessage' in event) {
       push(chalk.yellow(`[System] ${event.SystemMessage.msg}`) + '\n');
@@ -218,7 +245,7 @@ export default function App({ bridge, channel, initialTool = 'Gemini', subscribe
     } else if ('SyncContext' in event) {
       // Suppress — context is injected into the agent prompt, not shown to the user.
     }
-  }, [push, appendToLast, markLastComplete, activeTool]);
+  }, [push, appendToLast, markLastComplete, activeTool, activeModel]);
 
   // Register with the subscriber set provided by index.tsx.
   // The cleanup function automatically deregisters on unmount or when deps change.
@@ -248,6 +275,13 @@ export default function App({ bridge, channel, initialTool = 'Gemini', subscribe
         if (action.type === 'model') {
           setMenuSelectedIndex(0);
           setMenuMode('model');
+          return;
+        }
+        if (action.type === 'session') {
+          // Load recent turns and open the browser.
+          setSessionTurns(loadRecentTurns(50));
+          setMenuSelectedIndex(0);
+          setMenuMode('session');
           return;
         }
         if (action.type === 'clear') {
@@ -322,8 +356,11 @@ export default function App({ bridge, channel, initialTool = 'Gemini', subscribe
         return;
       }
       if (key.downArrow) {
-        const count = menuMode === 'provider' ? AGENT_TOOLS.length : PROVIDER_MODELS[activeTool].length;
-        setMenuSelectedIndex((i) => Math.min(count - 1, i + 1));
+        const count =
+          menuMode === 'provider' ? AGENT_TOOLS.length :
+          menuMode === 'session'  ? sessionTurns.length :
+          PROVIDER_MODELS[activeTool].length;
+        setMenuSelectedIndex((i) => Math.min(Math.max(0, count - 1), i + 1));
         return;
       }
       if (key.return) {
@@ -336,6 +373,7 @@ export default function App({ bridge, channel, initialTool = 'Gemini', subscribe
             bridge.send({ Prompt: { text: `/model ${model}`, tool: null, channel: null } });
           }
         }
+        // session mode: Enter just closes (view-only for now)
         setMenuMode(null);
         return;
       }
@@ -374,7 +412,7 @@ export default function App({ bridge, channel, initialTool = 'Gemini', subscribe
     `[${toolCommandName(activeTool)}${modelLabel}]  q=quit  1-4=switch tool  /provider  /model  /clear`,
   );
 
-  // Menu items for current mode
+  // Menu items for current mode (only used for provider / model modes)
   const menuItems =
     menuMode === 'provider'
       ? AGENT_TOOLS.map((t, i) => `${i + 1}. ${toolCommandName(t)}`)
@@ -407,8 +445,14 @@ export default function App({ bridge, channel, initialTool = 'Gemini', subscribe
         })}
       </Box>
 
-      {/* Selection menu overlay (shown instead of input during menu mode) */}
-      {menuMode !== null ? (
+      {/* Session browser overlay */}
+      {menuMode === 'session' ? (
+        <SessionBrowser
+          turns={sessionTurns}
+          selectedIndex={menuSelectedIndex}
+        />
+      ) : menuMode !== null ? (
+        /* Provider / model selection menu overlay */
         <SelectionMenu
           title={menuTitle}
           items={menuItems}

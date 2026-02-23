@@ -37,6 +37,10 @@ describe('parseSlashCommand', () => {
     expect(parseSlashCommand('/CLEAR')).toEqual({ type: 'clear' });
   });
 
+  it('returns session action for /session', () => {
+    expect(parseSlashCommand('/session')).toEqual({ type: 'session' });
+  });
+
   it('returns bridge-forward for unknown slash commands', () => {
     expect(parseSlashCommand('/tool gemini')).toEqual({ type: 'bridge-forward', text: '/tool gemini' });
     expect(parseSlashCommand('/search hello')).toEqual({ type: 'bridge-forward', text: '/search hello' });
@@ -50,10 +54,11 @@ describe('parseSlashCommand', () => {
 });
 
 describe('SLASH_COMMANDS', () => {
-  it('contains at least provider, model, clear, reset', () => {
+  it('contains at least provider, model, session, clear, reset', () => {
     const names = SLASH_COMMANDS.map((c) => c.command);
     expect(names).toContain('provider');
     expect(names).toContain('model');
+    expect(names).toContain('session');
     expect(names).toContain('clear');
     expect(names).toContain('reset');
   });

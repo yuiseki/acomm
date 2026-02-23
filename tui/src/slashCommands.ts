@@ -13,6 +13,7 @@
 export type SlashAction =
   | { type: 'provider' }
   | { type: 'model' }
+  | { type: 'session' }
   | { type: 'clear' }
   | { type: 'bridge-forward'; text: string };
 
@@ -32,6 +33,7 @@ export interface SlashCommandDef {
 export const SLASH_COMMANDS: SlashCommandDef[] = [
   { command: 'provider', description: 'Open provider selection menu' },
   { command: 'model',    description: 'Open model selection menu for current provider' },
+  { command: 'session',  description: 'Browse past conversation sessions' },
   { command: 'clear',    description: 'Clear messages and reset bridge session' },
   { command: 'reset',    description: 'Alias for /clear' },
 ];
@@ -67,6 +69,7 @@ export function parseSlashCommand(text: string): SlashAction | null {
   switch (cmd) {
     case 'provider': return { type: 'provider' };
     case 'model':    return { type: 'model' };
+    case 'session':  return { type: 'session' };
     case 'clear':
     case 'reset':    return { type: 'clear' };
     default:         return { type: 'bridge-forward', text: trimmed };
