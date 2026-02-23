@@ -19,6 +19,8 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tokio-tungstenite",
+ "unicode-segmentation",
+ "unicode-width",
 ]
 
 [[package]]
