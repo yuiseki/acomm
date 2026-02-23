@@ -177,6 +177,7 @@ async fn start_tui(channel: Option<&str>) -> Result<(), Box<dyn Error>> {
     let app = App {
         input: InputState::new(), input_mode: InputMode::Normal, messages: Vec::new(),
         active_cli: AgentTool::Gemini, is_processing: false, scroll: 0,
+        auto_scroll: true,
         channel: channel.unwrap_or("tui").to_string(), spinner_idx: 0,
     };
     let tx_bridge = tx.clone();
