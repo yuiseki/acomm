@@ -7,9 +7,15 @@ mod ntfy;
 use acore::AgentTool;
 use clap::Parser;
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event},
+    event::{
+        self, DisableMouseCapture, EnableMouseCapture, Event,
+        KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+    },
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{
+        disable_raw_mode, enable_raw_mode, supports_keyboard_enhancement,
+        EnterAlternateScreen, LeaveAlternateScreen,
+    },
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
 use protocol::ProtocolEvent;
@@ -172,6 +178,19 @@ async fn start_tui(channel: Option<&str>) -> Result<(), Box<dyn Error>> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     let _ = execute!(stdout, EnterAlternateScreen, EnableMouseCapture);
+    // Kitty keyboard protocol を有効化して Shift+Enter などの修飾キーを区別できるようにする。
+    // 対応していないターミナルでは失敗するが graceful に継続する。
+    let keyboard_enhanced = supports_keyboard_enhancement().unwrap_or(false);
+    if keyboard_enhanced {
+        let _ = execute!(
+            stdout,
+            PushKeyboardEnhancementFlags(
+                KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                    | KeyboardEnhancementFlags::REPORT_EVENT_TYPES
+                    | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS,
+            )
+        );
+    }
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout))?;
     let (tx, rx) = mpsc::channel(100);
     let app = App {
@@ -209,6 +228,9 @@ async fn start_tui(channel: Option<&str>) -> Result<(), Box<dyn Error>> {
     let _ = tui::run_tui_app(&mut terminal, app, &mut writer, rx).await;
     bridge_handle.abort(); input_handle.abort(); tick_handle.abort();
     disable_raw_mode()?;
+    if keyboard_enhanced {
+        let _ = execute!(terminal.backend_mut(), PopKeyboardEnhancementFlags);
+    }
     execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
     terminal.show_cursor()?;
     Ok(())

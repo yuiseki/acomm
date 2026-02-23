@@ -1,6 +1,6 @@
 use crate::protocol::ProtocolEvent;
 use acore::AgentTool;
-use crossterm::event::{self, KeyCode, KeyModifiers};
+use crossterm::event::{self, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::{
     backend::Backend,
     layout::{Constraint, Direction, Layout},
@@ -296,6 +296,11 @@ where <B as Backend>::Error: 'static {
                     app.handle_bus_event(bus_event);
                 }
                 AppEvent::Input(key) => {
+                    // keyboard enhancement が有効のとき Press/Release/Repeat 全て届くため、
+                    // Press のみを処理する
+                    if key.kind != KeyEventKind::Press {
+                        continue;
+                    }
                     if key.modifiers.contains(KeyModifiers::CONTROL) {
                         match key.code {
                             KeyCode::Char('c') => return Ok(()),
@@ -378,8 +383,15 @@ where <B as Backend>::Error: 'static {
     }
 }
 
+/// 入力テキストの行数に応じて入力エリアの高さを計算する（borders 込み、最小 5）
+pub fn compute_input_height(text: &str) -> u16 {
+    let line_count = text.split('\n').count() as u16;
+    (line_count + 2).max(5)
+}
+
 fn render_ui(f: &mut Frame, app: &mut App) {
-    let chunks = Layout::default().direction(Direction::Vertical).constraints([Constraint::Length(3), Constraint::Min(1), Constraint::Length(5)]).split(f.area());
+    let input_height = compute_input_height(&app.input.text);
+    let chunks = Layout::default().direction(Direction::Vertical).constraints([Constraint::Length(3), Constraint::Min(1), Constraint::Length(input_height)]).split(f.area());
     let spinner_chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
     let mode_str = if app.is_processing { format!("THINKING {}", spinner_chars[app.spinner_idx]) } else { match app.input_mode { InputMode::Normal => "NORMAL".into(), InputMode::Editing => "INSERT".into() } };
     let header = Paragraph::new(format!(" Mode: {} | CLI: {} | Channel: {} | AutoScroll: {}", mode_str, app.active_cli.command_name(), app.channel, app.auto_scroll)).block(Block::default().title(" Status ").borders(Borders::ALL));
@@ -407,6 +419,51 @@ fn render_ui(f: &mut Frame, app: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_compute_input_height_single_line() {
+        assert_eq!(compute_input_height(""), 5);
+        assert_eq!(compute_input_height("hello"), 5);
+        assert_eq!(compute_input_height("一行のテキスト"), 5);
+    }
+
+    #[test]
+    fn test_compute_input_height_multiline() {
+        // 2行: max(2+2, 5) = 5
+        assert_eq!(compute_input_height("line1\nline2"), 5);
+        // 3行: max(3+2, 5) = 5
+        assert_eq!(compute_input_height("a\nb\nc"), 5);
+        // 4行: max(4+2, 5) = 6
+        assert_eq!(compute_input_height("a\nb\nc\nd"), 6);
+        // 5行: max(5+2, 5) = 7
+        assert_eq!(compute_input_height("a\nb\nc\nd\ne"), 7);
+    }
+
+    #[test]
+    fn test_newline_in_input_state() {
+        let mut input = InputState::new();
+        input.enter_char('a');
+        input.enter_char('\n');
+        input.enter_char('b');
+        let lines = input.get_lines();
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0], "a");
+        assert_eq!(lines[1], "b");
+    }
+
+    #[test]
+    fn test_cursor_coords_after_newline() {
+        let mut input = InputState::new();
+        input.enter_char('h');
+        input.enter_char('i');
+        input.enter_char('\n');
+        input.enter_char('x');
+        // カーソルは row=1, col=1 にあるはず
+        let (row, col) = input.get_cursor_coords();
+        assert_eq!(row, 1);
+        assert_eq!(col, 1);
+    }
+
     #[test]
     fn test_input_state_complex() {
         let mut input = InputState::new();
