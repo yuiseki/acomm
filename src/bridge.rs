@@ -1,12 +1,9 @@
 use crate::protocol::ProtocolEvent;
-use acore::{AgentExecutor, AgentTool};
-use chrono::Local;
-use std::{collections::VecDeque, error::Error, path::Path, path::PathBuf, sync::Arc};
+use acore::{AgentExecutor, AgentTool, SessionManager};
+use std::{collections::VecDeque, error::Error, path::Path, sync::Arc};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
-use tokio::process::Command;
 use tokio::sync::{broadcast, Mutex};
-use serde::Serialize;
 
 const SOCKET_PATH: &str = "/tmp/acomm.sock";
 const MAX_BACKLOG: usize = 100;
@@ -14,49 +11,7 @@ const MAX_BACKLOG: usize = 100;
 pub struct BridgeState {
     pub active_tool: AgentTool,
     pub backlog: VecDeque<ProtocolEvent>,
-}
-
-pub struct SessionLogger {
-    root_dir: PathBuf,
-}
-
-impl SessionLogger {
-    pub fn new(root_dir: PathBuf) -> Self {
-        Self { root_dir }
-    }
-
-    pub async fn log_event(&self, event: &ProtocolEvent) -> Result<(), Box<dyn Error + Send + Sync>> {
-        let now = Local::now();
-        let path = self.root_dir
-            .join(now.format("%Y/%m").to_string())
-            .join(now.format("%Y-%m-%d.jsonl").to_string());
-
-        if let Some(parent) = path.parent() {
-            tokio::fs::create_dir_all(parent).await?;
-        }
-
-        let mut file = tokio::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)
-            .await?;
-
-        #[derive(Serialize)]
-        struct LogEntry<'a> {
-            timestamp: String,
-            event: &'a ProtocolEvent,
-        }
-
-        let entry = LogEntry {
-            timestamp: now.to_rfc3339(),
-            event,
-        };
-
-        let j = serde_json::to_string(&entry)?;
-        file.write_all(format!("{}\n", j).as_bytes()).await?;
-        file.flush().await?; // 確実に書き込む
-        Ok(())
-    }
+    pub session_manager: SessionManager,
 }
 
 pub async fn start_bridge() -> Result<(), Box<dyn Error>> {
@@ -71,21 +26,13 @@ pub async fn start_bridge() -> Result<(), Box<dyn Error>> {
     let state = Arc::new(Mutex::new(BridgeState {
         active_tool: AgentTool::Gemini,
         backlog: VecDeque::new(),
+        session_manager: SessionManager::new(),
     }));
 
-    // セッションロガーの初期化
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/home/yuiseki".into());
-    let logger = Arc::new(SessionLogger::new(PathBuf::from(home).join(".cache/acomm/sessions")));
-
-    // バックログ管理タスク
     let mut manager_rx = tx.subscribe();
     let state_for_manager = Arc::clone(&state);
-    let logger_for_manager = Arc::clone(&logger);
     tokio::spawn(async move {
         while let Ok(event) = manager_rx.recv().await {
-            // セッションログに記録
-            let _ = logger_for_manager.log_event(&event).await;
-
             let mut s = state_for_manager.lock().await;
             if matches!(event, ProtocolEvent::Prompt { .. } | ProtocolEvent::AgentLine { .. } | ProtocolEvent::AgentDone | ProtocolEvent::SystemMessage { .. } | ProtocolEvent::ToolSwitched { .. }) {
                 s.backlog.push_back(event.clone());
@@ -172,11 +119,18 @@ async fn handle_bridge_connection(
                                 let _ = tx_loop.send(ProtocolEvent::StatusUpdate { is_processing: true });
                                 
                                 let tx_inner = Arc::clone(&tx_loop);
+                                let state_inner = Arc::clone(&state);
                                 let text_inner = text.clone();
+                                
+                                // SessionManager をロック外で利用するためにクローン
+                                let manager = state_inner.lock().await.session_manager.clone();
+                                
                                 tokio::spawn(async move {
                                     let tx_line = Arc::clone(&tx_inner);
                                     let tx_err = Arc::clone(&tx_inner);
-                                    match AgentExecutor::execute_stream(active_tool, &text_inner, move |line| {
+                                    
+                                    // Resume 付き実行
+                                    match manager.execute_with_resume(active_tool, &text_inner, move |line| {
                                         let _ = tx_line.send(ProtocolEvent::AgentLine { line });
                                     }).await {
                                         Ok(_) => {},
@@ -228,7 +182,7 @@ async fn handle_command(
     match *cmd {
         "search" => {
             let query = parts[1..].join(" ");
-            let output = Command::new("amem").arg("search").arg(&query).output().await?;
+            let output = std::process::Command::new("amem").arg("search").arg(&query).output()?;
             let result = String::from_utf8_lossy(&output.stdout).to_string();
             let _ = tx.send(ProtocolEvent::SystemMessage { 
                 msg: format!("Search results for '{}':\n{}", query, result), 
@@ -236,7 +190,7 @@ async fn handle_command(
             });
         }
         "today" => {
-            let output = Command::new("amem").arg("today").output().await?;
+            let output = std::process::Command::new("amem").arg("today").output()?;
             let result = String::from_utf8_lossy(&output.stdout).to_string();
             let _ = tx.send(ProtocolEvent::SystemMessage { 
                 msg: format!("Today's summary:\n{}", result), 
@@ -256,11 +210,13 @@ async fn handle_command(
             }
         }
         "clear" => {
-            state.lock().await.backlog.clear();
-            let _ = tx.send(ProtocolEvent::SystemMessage { msg: "Backlog cleared.".to_string(), channel: Some("bridge".into()) });
+            let mut s = state.lock().await;
+            s.backlog.clear();
+            s.session_manager = SessionManager::new(); // セッションIDもリセット
+            let _ = tx.send(ProtocolEvent::SystemMessage { msg: "Backlog and session ID cleared.".to_string(), channel: Some("bridge".into()) });
         }
         "help" => {
-            let help = "/search <query> - Search memory\n/today - Show today's summary\n/tool <name> - Switch active CLI\n/clear - Clear backlog\n/help - Show this message";
+            let help = "/search <query> - Search memory\n/today - Show today's summary\n/tool <name> - Switch active CLI\n/clear - Clear backlog and session\n/help - Show this message";
             let _ = tx.send(ProtocolEvent::SystemMessage { msg: help.to_string(), channel: Some("bridge".into()) });
         }
         _ => {
@@ -277,33 +233,6 @@ mod tests {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use tokio::net::UnixStream;
     use std::time::Duration;
-
-    #[tokio::test]
-    async fn test_session_logger() {
-        let temp_dir = std::env::temp_dir().join("acomm_test_sessions");
-        let logger = SessionLogger::new(temp_dir.clone());
-        
-        let event = ProtocolEvent::Prompt {
-            text: "test_message_content".into(),
-            tool: Some(AgentTool::Gemini),
-            channel: Some("test_channel".into()),
-        };
-
-        logger.log_event(&event).await.expect("Failed to log event");
-
-        let now = Local::now();
-        let log_file = temp_dir
-            .join(now.format("%Y/%m").to_string())
-            .join(now.format("%Y-%m-%d.jsonl").to_string());
-
-        assert!(log_file.exists(), "Log file does not exist at {:?}", log_file);
-        let content = std::fs::read_to_string(log_file).unwrap();
-        println!("File content: {}", content);
-        assert!(content.contains("test_message_content"));
-        assert!(content.contains("test_channel"));
-        
-        let _ = std::fs::remove_dir_all(temp_dir);
-    }
 
     #[tokio::test]
     async fn test_bridge_prompt_flow() {
