@@ -17,7 +17,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Bridge } from './bridge.js';
 import type { AgentTool, ProtocolEvent } from './protocol.js';
-import { toolCommandName, AGENT_TOOLS, PROVIDER_MODELS } from './protocol.js';
+import { toolCommandName, AGENT_TOOLS, PROVIDER_MODELS, normalizeTool, getModelsForTool } from './protocol.js';
 import MultilineInput from './MultilineInput.js';
 import SelectionMenu from './SelectionMenu.js';
 import SlashAutocomplete from './SlashAutocomplete.js';
@@ -130,8 +130,9 @@ export default function App({ bridge, channel, initialTool = 'Gemini', subscribe
   const savedInputRef = useRef(''); // save current input before history navigation
 
   // --- tool / processing state ---
-  const [activeTool, setActiveTool] = useState<AgentTool>(initialTool);
-  const [activeModel, setActiveModel] = useState<string>(PROVIDER_MODELS[initialTool][0] ?? '');
+  const normalizedInitialTool = normalizeTool(initialTool);
+  const [activeTool, setActiveTool] = useState<AgentTool>(normalizedInitialTool);
+  const [activeModel, setActiveModel] = useState<string>(getModelsForTool(normalizedInitialTool)[0] ?? '');
   const [isProcessing, setIsProcessing] = useState(false);
 
   // --- menu mode state ---
@@ -237,7 +238,7 @@ export default function App({ bridge, channel, initialTool = 'Gemini', subscribe
       const newTool = event.ToolSwitched.tool;
       setActiveTool(newTool);
       // Reset model to the first available model for the new tool
-      setActiveModel(PROVIDER_MODELS[newTool][0] ?? '');
+      setActiveModel(getModelsForTool(newTool)[0] ?? '');
       push(chalk.cyan(`\n[Tool switched → ${newTool}]\n`));
     } else if ('ModelSwitched' in event) {
       setActiveModel(event.ModelSwitched.model);
@@ -359,7 +360,7 @@ export default function App({ bridge, channel, initialTool = 'Gemini', subscribe
         const count =
           menuMode === 'provider' ? AGENT_TOOLS.length :
           menuMode === 'session'  ? sessionTurns.length :
-          PROVIDER_MODELS[activeTool].length;
+          getModelsForTool(activeTool).length;
         setMenuSelectedIndex((i) => Math.min(Math.max(0, count - 1), i + 1));
         return;
       }
@@ -368,7 +369,7 @@ export default function App({ bridge, channel, initialTool = 'Gemini', subscribe
           const tool = AGENT_TOOLS[menuSelectedIndex]!;
           bridge.send({ Prompt: { text: `/tool ${toolCommandName(tool)}`, tool: null, channel: null } });
         } else if (menuMode === 'model') {
-          const model = PROVIDER_MODELS[activeTool][menuSelectedIndex];
+          const model = getModelsForTool(activeTool)[menuSelectedIndex];
           if (model) {
             bridge.send({ Prompt: { text: `/model ${model}`, tool: null, channel: null } });
           }
@@ -417,7 +418,7 @@ export default function App({ bridge, channel, initialTool = 'Gemini', subscribe
     menuMode === 'provider'
       ? AGENT_TOOLS.map((t, i) => `${i + 1}. ${toolCommandName(t)}`)
       : menuMode === 'model'
-      ? PROVIDER_MODELS[activeTool].map((m, i) => `${i + 1}. ${m}`)
+      ? getModelsForTool(activeTool).map((m, i) => `${i + 1}. ${m}`)
       : [];
 
   const menuTitle =

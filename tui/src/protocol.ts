@@ -41,3 +41,20 @@ export function eventKind(event: ProtocolEvent): string {
 export function toolCommandName(tool: AgentTool): string {
   return tool.toLowerCase();
 }
+
+/** Case-insensitively finds the valid AgentTool for a given string. */
+export function normalizeTool(name: string | null | undefined): AgentTool {
+  if (!name) return 'Gemini';
+  const target = name.toLowerCase();
+  for (const tool of AGENT_TOOLS) {
+    if (tool.toLowerCase() === target) return tool;
+  }
+  if ('mock'.toLowerCase() === target) return 'Mock';
+  return 'Gemini';
+}
+
+/** Safely gets the model list for a tool, falling back to Gemini if the tool is invalid. */
+export function getModelsForTool(tool: AgentTool | string | null | undefined): string[] {
+  const normalized = normalizeTool(tool as any);
+  return PROVIDER_MODELS[normalized] ?? PROVIDER_MODELS['Gemini'];
+}

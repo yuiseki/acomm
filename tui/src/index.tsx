@@ -13,6 +13,7 @@ import { render } from 'ink';
 import { parseArgs } from 'node:util';
 import { ensureBridge, connectBridge } from './bridge.js';
 import type { ProtocolEvent, AgentTool } from './protocol.js';
+import { normalizeTool } from './protocol.js';
 import App from './App.js';
 
 // ---------- CLI argument parsing ----------
@@ -27,7 +28,7 @@ const { values } = parseArgs({
 });
 
 const channel = values.channel as string;
-const initialTool = (values.tool as string) as AgentTool;
+const initialTool = normalizeTool(values.tool as string);
 
 // ---------- Bootstrap ----------
 
