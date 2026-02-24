@@ -67,15 +67,28 @@ export default function MultilineInput({
 }: Props): React.JSX.Element {
   const rootRef = useRef<DOMElement | null>(null);
   const [measuredTextWidth, setMeasuredTextWidth] = useState<number | null>(null);
+  const ignoreNextBareLineFeedRef = useRef(false);
 
   const handleInput = useCallback(
     (input: string, key: ReturnType<typeof useInput extends (h: (i: string, k: infer K) => void) => void ? never : never> extends never ? any : any) => {
       if (isProcessing) return;
 
+      // Some terminals send Shift+Enter as a bare LF (`\n`) with no modifier flags.
+      // IME commit flows can also emit a bare LF, so we selectively ignore the next
+      // bare LF after multi-char / IME-like inserts (see regular input branch below).
+      const isBareLineFeed = input === '\n' && !key.return && !key.ctrl;
+      if (isBareLineFeed && ignoreNextBareLineFeedRef.current) {
+        ignoreNextBareLineFeedRef.current = false;
+        return;
+      }
+
       // --- newline: Shift+Enter, Alt+Enter, Ctrl+J ---
-      const isNewline = shouldInsertNewline(input, key); // Ctrl+J fallback, IME-safe
+      const isNewline = shouldInsertNewline(input, key, {
+        allowBareLineFeedFallback: isBareLineFeed,
+      }); // Includes bare-LF Shift+Enter fallback with IME guard above.
 
       if (isNewline) {
+        ignoreNextBareLineFeedRef.current = false;
         const next = insertAt(value, cursorOffset, '\n');
         onChangeValue(next, cursorOffset + 1);
         return;
@@ -83,12 +96,14 @@ export default function MultilineInput({
 
       // --- submit: plain Enter ---
       if (key.return) {
+        ignoreNextBareLineFeedRef.current = false;
         if (value.trim()) onSubmit(value);
         return;
       }
 
       // --- backspace ---
       if (key.backspace || key.delete) {
+        ignoreNextBareLineFeedRef.current = false;
         const result = deleteCharBefore(value, cursorOffset);
         onChangeValue(result.text, result.cursor);
         return;
@@ -96,6 +111,7 @@ export default function MultilineInput({
 
       // --- cursor movement ---
       if (key.leftArrow) {
+        ignoreNextBareLineFeedRef.current = false;
         if (cursorOffset > 0) {
           // Move back one code point
           const before = value.slice(0, cursorOffset);
@@ -106,6 +122,7 @@ export default function MultilineInput({
         return;
       }
       if (key.rightArrow) {
+        ignoreNextBareLineFeedRef.current = false;
         if (cursorOffset < value.length) {
           // Move forward one code point
           const rest = value.slice(cursorOffset);
@@ -115,11 +132,13 @@ export default function MultilineInput({
         return;
       }
       if (key.upArrow) {
+        ignoreNextBareLineFeedRef.current = false;
         const [row, col] = offsetToRowCol(value, cursorOffset);
         if (row > 0) onChangeCursor(rowColToOffset(value, row - 1, col));
         return;
       }
       if (key.downArrow) {
+        ignoreNextBareLineFeedRef.current = false;
         const [row, col] = offsetToRowCol(value, cursorOffset);
         const lines = value.split('\n');
         if (row < lines.length - 1) onChangeCursor(rowColToOffset(value, row + 1, col));
@@ -128,12 +147,14 @@ export default function MultilineInput({
 
       // Ctrl+A / Home — start of current line
       if ((key.ctrl && input === 'a') || key.home) {
+        ignoreNextBareLineFeedRef.current = false;
         const [row] = offsetToRowCol(value, cursorOffset);
         onChangeCursor(rowColToOffset(value, row, 0));
         return;
       }
       // Ctrl+E / End — end of current line
       if ((key.ctrl && input === 'e') || key.end) {
+        ignoreNextBareLineFeedRef.current = false;
         const [row] = offsetToRowCol(value, cursorOffset);
         const lineLen = value.split('\n')[row]?.length ?? 0;
         onChangeCursor(rowColToOffset(value, row, lineLen));
@@ -142,20 +163,26 @@ export default function MultilineInput({
 
       // Ctrl+P — history up
       if (key.ctrl && input === 'p') {
+        ignoreNextBareLineFeedRef.current = false;
         onHistoryUp();
         return;
       }
       // Ctrl+N — history down
       if (key.ctrl && input === 'n') {
+        ignoreNextBareLineFeedRef.current = false;
         onHistoryDown();
         return;
       }
 
       // Escape — ignore
-      if (key.escape) return;
+      if (key.escape) {
+        ignoreNextBareLineFeedRef.current = false;
+        return;
+      }
 
       // --- Tab — trigger slash command autocomplete ---
       if (input === '\t') {
+        ignoreNextBareLineFeedRef.current = false;
         onTabComplete?.();
         return;
       }
@@ -164,6 +191,10 @@ export default function MultilineInput({
       if (!key.ctrl && !key.meta && input) {
         const insertText = normalizeInsertedInput(input);
         if (!insertText) return;
+        // IME commits and some paste payloads often arrive as multi-char insertions.
+        // Arm a one-shot bare-LF ignore to avoid treating a follow-up IME Enter as Shift+Enter.
+        ignoreNextBareLineFeedRef.current =
+          input !== insertText || Array.from(insertText).length > 1;
         const next = insertAt(value, cursorOffset, insertText);
         onChangeValue(next, cursorOffset + insertText.length);
       }

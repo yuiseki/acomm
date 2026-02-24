@@ -18,6 +18,12 @@ describe('shouldInsertNewline', () => {
     expect(shouldInsertNewline('\n', { return: false, ctrl: false })).toBe(false);
   });
 
+  it('can treat a bare LF as newline insertion when fallback is enabled', () => {
+    expect(
+      shouldInsertNewline('\n', { return: false, ctrl: false }, { allowBareLineFeedFallback: true }),
+    ).toBe(true);
+  });
+
   it('does not treat plain Enter as newline insertion', () => {
     expect(shouldInsertNewline('', { return: true })).toBe(false);
   });
