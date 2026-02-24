@@ -51,6 +51,19 @@ pub struct SlackMessageEvent {
 
 // ─── Public adapter entry point ───────────────────────────────────────────────
 
+/// Send a proactive agent notification to a Slack channel.
+///
+/// Required environment variables:
+///   SLACK_BOT_TOKEN        — xoxb-... bot token with chat:write scope
+///   SLACK_NOTIFY_CHANNEL_ID — target channel ID for agent-initiated messages
+pub async fn notify_slack(text: &str) -> Result<(), Box<dyn Error>> {
+    let bot_token = std::env::var("SLACK_BOT_TOKEN")
+        .map_err(|_| "SLACK_BOT_TOKEN environment variable not set")?;
+    let channel_id = std::env::var("SLACK_NOTIFY_CHANNEL_ID")
+        .map_err(|_| "SLACK_NOTIFY_CHANNEL_ID environment variable not set")?;
+    send_slack_message(&bot_token, &channel_id, text).await
+}
+
 pub async fn start_slack_adapter() -> Result<(), Box<dyn Error>> {
     let app_token = std::env::var("SLACK_APP_TOKEN")
         .map_err(|_| "SLACK_APP_TOKEN environment variable not set (xapp-...)")?;
@@ -251,6 +264,42 @@ pub fn transform_slack_message(text: &str, user_id: &str, slack_channel: &str) -
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn test_notify_slack_fails_without_bot_token() {
+        let token_backup = std::env::var("SLACK_BOT_TOKEN").ok();
+        let channel_backup = std::env::var("SLACK_NOTIFY_CHANNEL_ID").ok();
+        unsafe {
+            std::env::remove_var("SLACK_BOT_TOKEN");
+            std::env::remove_var("SLACK_NOTIFY_CHANNEL_ID");
+        }
+        let result = notify_slack("test").await;
+        assert!(result.is_err(), "should fail when SLACK_BOT_TOKEN is missing");
+        let msg = format!("{}", result.unwrap_err());
+        assert!(msg.contains("SLACK_BOT_TOKEN"), "error should mention missing var");
+        unsafe {
+            if let Some(v) = token_backup { std::env::set_var("SLACK_BOT_TOKEN", v); }
+            if let Some(v) = channel_backup { std::env::set_var("SLACK_NOTIFY_CHANNEL_ID", v); }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_notify_slack_fails_without_channel_env() {
+        let token_backup = std::env::var("SLACK_BOT_TOKEN").ok();
+        let channel_backup = std::env::var("SLACK_NOTIFY_CHANNEL_ID").ok();
+        unsafe {
+            std::env::set_var("SLACK_BOT_TOKEN", "dummy-token");
+            std::env::remove_var("SLACK_NOTIFY_CHANNEL_ID");
+        }
+        let result = notify_slack("test").await;
+        assert!(result.is_err(), "should fail when SLACK_NOTIFY_CHANNEL_ID is missing");
+        let msg = format!("{}", result.unwrap_err());
+        assert!(msg.contains("SLACK_NOTIFY_CHANNEL_ID"), "error should mention missing var");
+        unsafe {
+            if let Some(v) = token_backup { std::env::set_var("SLACK_BOT_TOKEN", v); } else { std::env::remove_var("SLACK_BOT_TOKEN"); }
+            if let Some(v) = channel_backup { std::env::set_var("SLACK_NOTIFY_CHANNEL_ID", v); }
+        }
+    }
 
     #[test]
     fn test_transform_slack_message() {

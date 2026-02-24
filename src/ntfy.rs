@@ -18,6 +18,19 @@ struct NtfyMessage {
     title: Option<String>,
 }
 
+/// Send a proactive agent notification to the ntfy topic.
+///
+/// Required environment variables:
+///   NTFY_TOPIC — ntfy.sh topic name
+///
+/// The message is prefixed with "[bot]" to prevent the running ntfy adapter
+/// from forwarding it back to the bridge as a user message.
+pub async fn notify_ntfy(text: &str) -> Result<(), Box<dyn Error>> {
+    let topic = std::env::var("NTFY_TOPIC")
+        .map_err(|_| "NTFY_TOPIC environment variable not set")?;
+    send_to_ntfy(&topic, text).await
+}
+
 pub async fn start_ntfy_adapter() -> Result<(), Box<dyn Error>> {
     let topic = std::env::var("NTFY_TOPIC").map_err(|_| "NTFY_TOPIC environment variable not set")?;
     println!("ntfy adapter starting for topic: {}", topic);
@@ -105,6 +118,20 @@ pub fn transform_ntfy_message(text: &str, msg_id: &str) -> ProtocolEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn test_notify_ntfy_fails_without_topic_env() {
+        let backup = std::env::var("NTFY_TOPIC").ok();
+        unsafe { std::env::remove_var("NTFY_TOPIC"); }
+        let result = notify_ntfy("test").await;
+        assert!(result.is_err(), "should fail when NTFY_TOPIC is missing");
+        let msg = format!("{}", result.unwrap_err());
+        assert!(msg.contains("NTFY_TOPIC"), "error should mention missing var");
+        unsafe {
+            if let Some(v) = backup { std::env::set_var("NTFY_TOPIC", v); }
+        }
+    }
+
     #[test]
     fn test_transform_ntfy_message() {
         let event = transform_ntfy_message("hello", "msg123");

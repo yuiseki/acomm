@@ -139,6 +139,19 @@ fn should_forward_discord_message(
     true
 }
 
+/// Send a proactive agent notification to a Discord channel.
+///
+/// Required environment variables:
+///   DISCORD_BOT_TOKEN         — bot token
+///   DISCORD_NOTIFY_CHANNEL_ID — target channel ID for agent-initiated messages
+pub async fn notify_discord(text: &str) -> Result<(), Box<dyn Error>> {
+    let token = std::env::var("DISCORD_BOT_TOKEN")
+        .map_err(|_| "DISCORD_BOT_TOKEN environment variable not set")?;
+    let channel_id = std::env::var("DISCORD_NOTIFY_CHANNEL_ID")
+        .map_err(|_| "DISCORD_NOTIFY_CHANNEL_ID environment variable not set")?;
+    send_discord_message(&token, &channel_id, text).await
+}
+
 pub async fn start_discord_adapter() -> Result<(), Box<dyn Error>> {
     let token = std::env::var("DISCORD_BOT_TOKEN")
         .map_err(|_| "DISCORD_BOT_TOKEN environment variable not set")?;
@@ -483,6 +496,45 @@ mod tests {
                 username: "user".to_string(),
                 bot: Some(false),
             },
+        }
+    }
+
+    #[tokio::test]
+    async fn test_notify_discord_fails_without_token_env() {
+        // Temporarily remove DISCORD_BOT_TOKEN and DISCORD_NOTIFY_CHANNEL_ID
+        let token_backup = std::env::var("DISCORD_BOT_TOKEN").ok();
+        let channel_backup = std::env::var("DISCORD_NOTIFY_CHANNEL_ID").ok();
+        unsafe {
+            std::env::remove_var("DISCORD_BOT_TOKEN");
+            std::env::remove_var("DISCORD_NOTIFY_CHANNEL_ID");
+        }
+        let result = notify_discord("test").await;
+        assert!(result.is_err(), "should fail when DISCORD_BOT_TOKEN is missing");
+        let msg = format!("{}", result.unwrap_err());
+        assert!(msg.contains("DISCORD_BOT_TOKEN"), "error should mention missing var");
+        // Restore
+        unsafe {
+            if let Some(v) = token_backup { std::env::set_var("DISCORD_BOT_TOKEN", v); }
+            if let Some(v) = channel_backup { std::env::set_var("DISCORD_NOTIFY_CHANNEL_ID", v); }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_notify_discord_fails_without_channel_env() {
+        let token_backup = std::env::var("DISCORD_BOT_TOKEN").ok();
+        let channel_backup = std::env::var("DISCORD_NOTIFY_CHANNEL_ID").ok();
+        unsafe {
+            std::env::set_var("DISCORD_BOT_TOKEN", "dummy-token");
+            std::env::remove_var("DISCORD_NOTIFY_CHANNEL_ID");
+        }
+        let result = notify_discord("test").await;
+        assert!(result.is_err(), "should fail when DISCORD_NOTIFY_CHANNEL_ID is missing");
+        let msg = format!("{}", result.unwrap_err());
+        assert!(msg.contains("DISCORD_NOTIFY_CHANNEL_ID"), "error should mention missing var");
+        // Restore
+        unsafe {
+            if let Some(v) = token_backup { std::env::set_var("DISCORD_BOT_TOKEN", v); } else { std::env::remove_var("DISCORD_BOT_TOKEN"); }
+            if let Some(v) = channel_backup { std::env::set_var("DISCORD_NOTIFY_CHANNEL_ID", v); }
         }
     }
 

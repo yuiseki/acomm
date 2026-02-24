@@ -38,6 +38,8 @@ struct CliArgs {
     #[arg(long)] slack: bool,
     #[arg(long)] ntfy: bool,
     #[arg(long)] discord: bool,
+    /// エージェントとしてメッセージを送信する (--discord / --slack / --ntfy で送信先を指定)
+    #[arg(long)] agent: Option<String>,
 }
 
 const SOCKET_PATH: &str = "/tmp/acomm.sock";
@@ -46,6 +48,36 @@ const SOCKET_PATH: &str = "/tmp/acomm.sock";
 async fn main() -> Result<(), Box<dyn Error>> {
     let args = CliArgs::parse();
     if args.bridge { return bridge::start_bridge().await; }
+
+    // --agent: send a proactive message as the bot without going through the AI pipeline.
+    // --discord / --slack / --ntfy narrow the targets; omitting all sends to every
+    // configured adapter (silently skips those whose env vars are missing).
+    if let Some(ref text) = args.agent {
+        let any_target = args.discord || args.slack || args.ntfy;
+        if !any_target || args.discord {
+            match discord::notify_discord(text).await {
+                Ok(()) => println!("Discord: sent."),
+                Err(e) if any_target => return Err(e),
+                Err(e) => eprintln!("Discord: skipped ({})", e),
+            }
+        }
+        if !any_target || args.slack {
+            match slack::notify_slack(text).await {
+                Ok(()) => println!("Slack: sent."),
+                Err(e) if any_target => return Err(e),
+                Err(e) => eprintln!("Slack: skipped ({})", e),
+            }
+        }
+        if !any_target || args.ntfy {
+            match ntfy::notify_ntfy(text).await {
+                Ok(()) => println!("ntfy: sent."),
+                Err(e) if any_target => return Err(e),
+                Err(e) => eprintln!("ntfy: skipped ({})", e),
+            }
+        }
+        return Ok(());
+    }
+
     if args.reset { return publish_to_bridge("/clear", Some("bridge")).await; }
     if args.slack { return slack::start_slack_adapter().await; }
     if args.ntfy { return ntfy::start_ntfy_adapter().await; }
