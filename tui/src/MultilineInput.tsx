@@ -20,8 +20,8 @@
  *   so that Japanese input never causes horizontal overflow.
  */
 
-import React, { useCallback } from 'react';
-import { Box, Text, useInput } from 'ink';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Box, Text, useInput, getInnerWidth, type DOMElement } from 'ink';
 import chalk from 'chalk';
 import {
   insertAt,
@@ -30,12 +30,14 @@ import {
   rowColToOffset,
   wrapLine,
 } from './textHelpers.js';
+import { normalizeInsertedInput, shouldInsertNewline } from './inputKeyHelpers.js';
 
 interface Props {
   value: string;
   cursorOffset: number; // UTF-16 code-unit offset into value
   isProcessing: boolean;
   activeTool: string;
+  terminalWidth?: number;
   isActive?: boolean; // when false, input handling is suspended (e.g. during menu mode)
   onChangeCursor: (offset: number) => void;
   onChangeValue: (value: string, cursor: number) => void;
@@ -53,6 +55,7 @@ export default function MultilineInput({
   cursorOffset,
   isProcessing,
   activeTool,
+  terminalWidth,
   isActive = true,
   onChangeCursor,
   onChangeValue,
@@ -62,16 +65,15 @@ export default function MultilineInput({
   onTabComplete,
   hasCompletions = false,
 }: Props): React.JSX.Element {
+  const rootRef = useRef<DOMElement | null>(null);
+  const [measuredTextWidth, setMeasuredTextWidth] = useState<number | null>(null);
+
   const handleInput = useCallback(
     (input: string, key: ReturnType<typeof useInput extends (h: (i: string, k: infer K) => void) => void ? never : never> extends never ? any : any) => {
       if (isProcessing) return;
 
       // --- newline: Shift+Enter, Alt+Enter, Ctrl+J ---
-      const isNewline =
-        (key.return && key.shift) ||
-        (key.return && key.meta) ||
-        (key.return && key.alt) ||
-        (input === '\n' && !key.return); // Ctrl+J sends \n directly
+      const isNewline = shouldInsertNewline(input, key); // Ctrl+J fallback, IME-safe
 
       if (isNewline) {
         const next = insertAt(value, cursorOffset, '\n');
@@ -160,8 +162,10 @@ export default function MultilineInput({
 
       // --- regular character input ---
       if (!key.ctrl && !key.meta && input) {
-        const next = insertAt(value, cursorOffset, input);
-        onChangeValue(next, cursorOffset + input.length);
+        const insertText = normalizeInsertedInput(input);
+        if (!insertText) return;
+        const next = insertAt(value, cursorOffset, insertText);
+        onChangeValue(next, cursorOffset + insertText.length);
       }
     },
     [value, cursorOffset, isProcessing, onChangeCursor, onChangeValue, onSubmit, onHistoryUp, onHistoryDown, onTabComplete],
@@ -174,7 +178,40 @@ export default function MultilineInput({
   // ---------------------------------------------------------------------------
 
   // Available text width: terminal columns minus border(2) + paddingLeft(1) + safety(1)
-  const inputWidth = Math.max(20, (process.stdout.columns ?? 80) - 4);
+  const containerWidth = Math.max(20, terminalWidth ?? process.stdout.columns ?? 80);
+  const fallbackTextWidth = Math.max(20, containerWidth - 4);
+
+  // Measure the actual rendered width after Ink layout settles (initial mount can be off).
+  // This fixes first-input wrapping glitches when the first frame uses a transient width.
+  useEffect(() => {
+    const updateMeasuredWidth = () => {
+      if (!rootRef.current) return;
+      try {
+        // Root inner width excludes border; subtract left padding (1) for text area width.
+        const innerWidth = getInnerWidth(rootRef.current);
+        const textWidth = Math.max(1, innerWidth - 1);
+        setMeasuredTextWidth((prev) => (prev === textWidth ? prev : textWidth));
+      } catch {
+        // non-fatal; fallbackTextWidth remains in use
+      }
+    };
+
+    // Measure immediately and on the next tick(s) to catch initial layout stabilization.
+    updateMeasuredWidth();
+    const t1 = setTimeout(updateMeasuredWidth, 0);
+    const t2 = setTimeout(updateMeasuredWidth, 16);
+
+    const stdoutAny = process.stdout as NodeJS.WriteStream & { on?: (ev: string, cb: () => void) => void; off?: (ev: string, cb: () => void) => void };
+    stdoutAny.on?.('resize', updateMeasuredWidth);
+
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+      stdoutAny.off?.('resize', updateMeasuredWidth);
+    };
+  }, [containerWidth]);
+
+  const inputWidth = measuredTextWidth ?? fallbackTextWidth;
 
   const lines = value.split('\n');
   const [cursorRow, cursorCol] = offsetToRowCol(value, cursorOffset);
@@ -196,7 +233,7 @@ export default function MultilineInput({
 
       if (!isCurrentRow) {
         visualRows.push(
-          <Box key={key} height={1}>
+          <Box key={key} height={1} width={inputWidth} overflow="hidden">
             <Text>{chunk.text || ' '}</Text>
           </Box>,
         );
@@ -215,17 +252,15 @@ export default function MultilineInput({
         const cursorChar = cps[relIdx] ?? ' ';
         const after = cps.slice(relIdx + 1).join('');
         visualRows.push(
-          <Box key={key} height={1}>
-            <Text>
-              {before}
-              {chalk.inverse(cursorChar)}
-              {after}
-            </Text>
+          <Box key={key} height={1} width={inputWidth} overflow="hidden">
+            {before ? <Text>{before}</Text> : null}
+            <Text inverse>{cursorChar}</Text>
+            {after ? <Text>{after}</Text> : null}
           </Box>,
         );
       } else {
         visualRows.push(
-          <Box key={key} height={1}>
+          <Box key={key} height={1} width={inputWidth} overflow="hidden">
             <Text>{chunk.text}</Text>
           </Box>,
         );
@@ -234,8 +269,8 @@ export default function MultilineInput({
   });
 
   return (
-    <Box flexDirection="column" borderStyle="single" borderColor={isProcessing ? 'yellow' : 'cyan'}>
-      <Box flexDirection="column" paddingLeft={1}>
+    <Box ref={rootRef} flexDirection="column" width={containerWidth} borderStyle="single" borderColor={isProcessing ? 'yellow' : 'cyan'}>
+      <Box flexDirection="column" width={containerWidth - 2} paddingLeft={1}>
         {visualRows}
       </Box>
     </Box>

@@ -10,7 +10,7 @@
  */
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Box, Text, useApp, useInput } from 'ink';
+import { Box, Text, useApp, useInput, useStdout } from 'ink';
 import chalk from 'chalk';
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -80,6 +80,8 @@ interface AppProps {
 
 export default function App({ bridge, channel, initialProvider = 'Gemini', subscribe, unsubscribe }: AppProps): React.JSX.Element {
   const { exit } = useApp();
+  const { stdout } = useStdout();
+  const terminalWidth = Math.max(20, stdout.columns ?? process.stdout.columns ?? 80);
 
   // --- message list ---
   const [messages, setMessages] = useState<Message[]>([]);
@@ -417,9 +419,9 @@ export default function App({ bridge, channel, initialProvider = 'Gemini', subsc
     menuMode === 'provider' ? 'Select provider' : 'Select model';
 
   return (
-    <Box flexDirection="column" height="100%">
+    <Box flexDirection="column" width={terminalWidth} height="100%">
       {/* Message history */}
-      <Box flexDirection="column" flexGrow={1} overflowY="hidden">
+      <Box flexDirection="column" width={terminalWidth} flexGrow={1} overflowY="hidden">
         {messages.map((m, i) => {
           const isLast = i === messages.length - 1;
           // Render markdown for agent messages once streaming is complete.
@@ -458,6 +460,7 @@ export default function App({ bridge, channel, initialProvider = 'Gemini', subsc
             cursorOffset={cursorOffset}
             isProcessing={isProcessing}
             activeTool={providerCommandName(activeProvider)}
+            terminalWidth={terminalWidth}
             isActive={menuMode === null}
             hasCompletions={slashCompletions.length > 0}
             onChangeCursor={setCursorOffset}
@@ -470,8 +473,8 @@ export default function App({ bridge, channel, initialProvider = 'Gemini', subsc
         </>
       )}
       {/* Status bar */}
-      <Box height={1}>
-        <Text>{statusLine}</Text>
+      <Box width={terminalWidth} height={1}>
+        <Text wrap="truncate-end">{statusLine}</Text>
       </Box>
     </Box>
   );
