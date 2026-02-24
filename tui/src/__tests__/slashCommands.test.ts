@@ -41,8 +41,12 @@ describe('parseSlashCommand', () => {
     expect(parseSlashCommand('/session')).toEqual({ type: 'session' });
   });
 
+  it('returns local actions for known commands even with arguments', () => {
+    expect(parseSlashCommand('/provider gemini')).toEqual({ type: 'provider' });
+    expect(parseSlashCommand('/model gemini-2.5-flash')).toEqual({ type: 'model' });
+  });
+
   it('returns bridge-forward for unknown slash commands', () => {
-    expect(parseSlashCommand('/provider gemini')).toEqual({ type: 'bridge-forward', text: '/provider gemini' });
     expect(parseSlashCommand('/search hello')).toEqual({ type: 'bridge-forward', text: '/search hello' });
     expect(parseSlashCommand('/today')).toEqual({ type: 'bridge-forward', text: '/today' });
     expect(parseSlashCommand('/unknown')).toEqual({ type: 'bridge-forward', text: '/unknown' });

@@ -7,7 +7,9 @@
  * Japanese kana/kanji), a code unit == a code point == 1 character.
  */
 
+import ansiRegex from 'ansi-regex';
 import stringWidth from 'string-width';
+import stripAnsi from 'strip-ansi';
 
 // ---------------------------------------------------------------------------
 // Basic string operations (cursor-offset aware)
@@ -77,7 +79,7 @@ export function cpSlice(str: string, start: number, end?: number): string {
  * Full-width CJK characters count as 2 columns; ASCII counts as 1.
  */
 export function visualWidth(str: string): number {
-  return stringWidth(str);
+  return stringWidth(stripAnsi(str));
 }
 
 // ---------------------------------------------------------------------------
@@ -94,6 +96,60 @@ export interface VisualChunk {
   endCpIdx: number;
 }
 
+interface AnsiToken {
+  kind: 'ansi' | 'text';
+  value: string;
+}
+
+const SGR_RESET = '\x1b[0m';
+const ESC = '\x1b[';
+const C1_CSI = '\u009b';
+
+function tokenizeAnsi(input: string): AnsiToken[] {
+  const tokens: AnsiToken[] = [];
+  let last = 0;
+
+  for (const match of input.matchAll(ansiRegex())) {
+    const idx = match.index ?? 0;
+    if (idx > last) {
+      tokens.push({ kind: 'text', value: input.slice(last, idx) });
+    }
+    tokens.push({ kind: 'ansi', value: match[0] });
+    last = idx + match[0].length;
+  }
+
+  if (last < input.length) {
+    tokens.push({ kind: 'text', value: input.slice(last) });
+  }
+
+  return tokens;
+}
+
+function isSgrSequence(seq: string): boolean {
+  return (seq.startsWith(ESC) || seq.startsWith(C1_CSI)) && seq.endsWith('m');
+}
+
+function sgrHasReset(seq: string): boolean {
+  if (!isSgrSequence(seq)) return false;
+  const body = seq.startsWith(ESC) ? seq.slice(2, -1) : seq.slice(1, -1);
+  if (body === '') return true; // ESC[m == reset
+  return body.split(';').some((p) => p === '' || p === '0');
+}
+
+function isPureResetSgr(seq: string): boolean {
+  if (!isSgrSequence(seq)) return false;
+  const body = seq.startsWith(ESC) ? seq.slice(2, -1) : seq.slice(1, -1);
+  return body === '' || body === '0';
+}
+
+function nextActiveSgr(activeSgr: string, seq: string): string {
+  if (!isSgrSequence(seq)) return activeSgr;
+  const reset = sgrHasReset(seq);
+  const next = reset ? '' : activeSgr;
+  if (isPureResetSgr(seq)) return next;
+  return next + seq;
+}
+
 /**
  * Wraps a single logical line into VisualChunks that each fit within
  * maxWidth terminal columns, accounting for full-width (CJK) characters.
@@ -101,38 +157,54 @@ export interface VisualChunk {
  * Always returns at least one chunk, even for empty lines.
  */
 export function wrapLine(line: string, maxWidth: number): VisualChunk[] {
-  const codePoints = Array.from(line);
+  const visibleCodePoints = Array.from(stripAnsi(line));
 
-  if (codePoints.length === 0 || maxWidth <= 0) {
-    return [{ text: line, startCpIdx: 0, endCpIdx: codePoints.length }];
+  if (visibleCodePoints.length === 0 || maxWidth <= 0) {
+    return [{ text: line, startCpIdx: 0, endCpIdx: visibleCodePoints.length }];
   }
 
+  const tokens = tokenizeAnsi(line);
   const chunks: VisualChunk[] = [];
+
+  let chunkText = '';
   let chunkStart = 0;
   let currentWidth = 0;
+  let visibleCpIdx = 0;
+  let activeSgr = '';
 
-  for (let i = 0; i < codePoints.length; i++) {
-    const charWidth = stringWidth(codePoints[i]!);
-
-    if (currentWidth + charWidth > maxWidth && currentWidth > 0) {
-      // Flush current chunk before this character overflows
-      chunks.push({
-        text: codePoints.slice(chunkStart, i).join(''),
-        startCpIdx: chunkStart,
-        endCpIdx: i,
-      });
-      chunkStart = i;
-      currentWidth = 0;
+  const flushChunk = () => {
+    let text = chunkText;
+    if (activeSgr && text.length > 0 && !text.endsWith(SGR_RESET)) {
+      text += SGR_RESET;
     }
-    currentWidth += charWidth;
+    chunks.push({
+      text,
+      startCpIdx: chunkStart,
+      endCpIdx: visibleCpIdx,
+    });
+  };
+
+  for (const token of tokens) {
+    if (token.kind === 'ansi') {
+      chunkText += token.value;
+      activeSgr = nextActiveSgr(activeSgr, token.value);
+      continue;
+    }
+
+    for (const cp of Array.from(token.value)) {
+      const charWidth = visualWidth(cp);
+      if (currentWidth + charWidth > maxWidth && currentWidth > 0) {
+        flushChunk();
+        chunkStart = visibleCpIdx;
+        chunkText = activeSgr;
+        currentWidth = 0;
+      }
+      chunkText += cp;
+      currentWidth += charWidth;
+      visibleCpIdx += 1;
+    }
   }
 
-  // Flush remainder
-  chunks.push({
-    text: codePoints.slice(chunkStart).join(''),
-    startCpIdx: chunkStart,
-    endCpIdx: codePoints.length,
-  });
-
+  flushChunk();
   return chunks;
 }

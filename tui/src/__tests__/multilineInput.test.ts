@@ -218,6 +218,12 @@ describe('visualWidth', () => {
   it('empty string has width 0', () => {
     expect(visualWidth('')).toBe(0);
   });
+
+  it('ignores ANSI color escape sequences when computing width', () => {
+    const red = '\x1b[31m';
+    const reset = '\x1b[0m';
+    expect(visualWidth(`${red}AB日本${reset}`)).toBe(6);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -300,5 +306,31 @@ describe('wrapLine', () => {
       expect(chunks[i]!.startCpIdx).toBe(chunks[i - 1]!.endCpIdx);
     }
     expect(chunks[chunks.length - 1]!.endCpIdx).toBe(cpLen(line));
+  });
+
+  it('wraps ANSI-colored text by visible width (not raw escape length)', () => {
+    const red = '\x1b[31m';
+    const reset = '\x1b[0m';
+    const line = `${red}AB日本${reset}`; // visible width = 6
+    const chunks = wrapLine(line, 4);
+
+    const stripSgr = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, '');
+    expect(chunks).toHaveLength(2);
+    expect(stripSgr(chunks[0]!.text)).toBe('AB日');
+    expect(stripSgr(chunks[1]!.text)).toBe('本');
+    expect(visualWidth(chunks[0]!.text)).toBe(4);
+    expect(visualWidth(chunks[1]!.text)).toBe(2);
+  });
+
+  it('closes and reopens ANSI style across wrapped chunks to avoid style leak', () => {
+    const red = '\x1b[31m';
+    const reset = '\x1b[0m';
+    const chunks = wrapLine(`${red}ABCDE${reset}`, 3);
+
+    expect(chunks).toHaveLength(2);
+    expect(chunks[0]!.text).toContain(red);
+    expect(chunks[0]!.text).toContain(reset);
+    expect(chunks[1]!.text.startsWith(red)).toBe(true);
+    expect(chunks[1]!.text.endsWith(reset)).toBe(true);
   });
 });
