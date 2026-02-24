@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { eventKind, providerCommandName, AGENT_PROVIDERS, PROVIDER_MODELS } from '../protocol.js';
+import { eventKind, providerCommandName, AGENT_PROVIDERS, PROVIDER_MODELS, normalizeProvider } from '../protocol.js';
 import type { ProtocolEvent, AgentProvider } from '../protocol.js';
 
 describe('eventKind', () => {
@@ -44,13 +44,23 @@ describe('providerCommandName', () => {
   it('lowercases Claude', () => expect(providerCommandName('Claude')).toBe('claude'));
   it('lowercases Codex', () => expect(providerCommandName('Codex')).toBe('codex'));
   it('lowercases OpenCode', () => expect(providerCommandName('OpenCode')).toBe('opencode'));
+  it('lowercases Dummy', () => expect(providerCommandName('Dummy')).toBe('dummy'));
   it('lowercases Mock', () => expect(providerCommandName('Mock')).toBe('mock'));
 });
 
 describe('AGENT_PROVIDERS', () => {
-  it('contains exactly 4 providers', () => expect(AGENT_PROVIDERS).toHaveLength(4));
+  it('contains exactly 5 providers', () => expect(AGENT_PROVIDERS).toHaveLength(5));
+  it('includes Dummy (user-facing echo provider)', () => expect(AGENT_PROVIDERS).toContain('Dummy'));
   it('does not include Mock (internal only)', () => expect(AGENT_PROVIDERS).not.toContain('Mock'));
   it('starts with Gemini', () => expect(AGENT_PROVIDERS[0]).toBe('Gemini'));
+});
+
+describe('normalizeProvider', () => {
+  it('normalizes dummy aliases', () => {
+    expect(normalizeProvider('dummy')).toBe('Dummy');
+    expect(normalizeProvider('dummy-bot')).toBe('Dummy');
+    expect(normalizeProvider('dummybot')).toBe('Dummy');
+  });
 });
 
 describe('PROVIDER_MODELS', () => {
@@ -86,6 +96,10 @@ describe('PROVIDER_MODELS', () => {
 
   it('OpenCode has at least one model', () => {
     expect(PROVIDER_MODELS['OpenCode'].length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('Dummy has at least one model', () => {
+    expect(PROVIDER_MODELS['Dummy'].length).toBeGreaterThanOrEqual(1);
   });
 });
 

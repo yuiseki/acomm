@@ -9,9 +9,9 @@
  *   {"ProviderSwitched":{"provider":"Gemini"}}
  */
 
-export type AgentProvider = 'Gemini' | 'Claude' | 'Codex' | 'OpenCode' | 'Mock';
+export type AgentProvider = 'Gemini' | 'Claude' | 'Codex' | 'OpenCode' | 'Dummy' | 'Mock';
 
-export const AGENT_PROVIDERS: AgentProvider[] = ['Gemini', 'Claude', 'Codex', 'OpenCode'];
+export const AGENT_PROVIDERS: AgentProvider[] = ['Gemini', 'Claude', 'Codex', 'OpenCode', 'Dummy'];
 
 /** Available models for each provider. */
 export const PROVIDER_MODELS: Record<AgentProvider, string[]> = {
@@ -19,6 +19,7 @@ export const PROVIDER_MODELS: Record<AgentProvider, string[]> = {
   Claude:   ['claude-opus-4-6', 'claude-sonnet-4-6', 'claude-haiku-4-5'],
   Codex:    ['gpt-4o', 'gpt-4o-mini', 'o1-mini'],
   OpenCode: ['default'],
+  Dummy:    ['echo'],
   Mock:     ['mock-model'],
 };
 
@@ -50,6 +51,7 @@ export function normalizeProvider(name: string | null | undefined): AgentProvide
   for (const provider of AGENT_PROVIDERS) {
     if (provider.toLowerCase() === target) return provider;
   }
+  if ('dummy-bot' === target || 'dummybot' === target) return 'Dummy';
   if ('mock'.toLowerCase() === target) return 'Mock';
   return 'Gemini';
 }

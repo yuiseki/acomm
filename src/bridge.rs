@@ -216,6 +216,7 @@ async fn handle_command(
                     "claude" => AgentProvider::Claude,
                     "codex" => AgentProvider::Codex,
                     "opencode" => AgentProvider::OpenCode,
+                    "dummy" | "dummy-bot" | "dummybot" => AgentProvider::Dummy,
                     "mock" => AgentProvider::Mock,
                     _ => return Ok(()),
                 };
@@ -306,5 +307,22 @@ mod tests {
         }
 
         assert!(saw_marker, "bridge should emit BridgeSyncDone after initial sync payload");
+    }
+
+    #[tokio::test]
+    async fn test_handle_command_provider_dummy_switches_provider() {
+        let (tx, mut rx) = broadcast::channel(8);
+        let tx = Arc::new(tx);
+        let state = Mutex::new(BridgeState {
+            active_provider: AgentProvider::Gemini,
+            active_model: None,
+            backlog: VecDeque::new(),
+            session_manager: SessionManager::new(),
+        });
+
+        handle_command("/provider dummy", &tx, &state).await.unwrap();
+
+        let ev = rx.recv().await.unwrap();
+        assert!(matches!(ev, ProtocolEvent::ProviderSwitched { provider: AgentProvider::Dummy }));
     }
 }
