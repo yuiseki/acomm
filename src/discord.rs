@@ -8,6 +8,10 @@
  * Required environment variables:
  *   DISCORD_BOT_TOKEN — bot token from the Discord Developer Portal
  *
+ * Optional environment variables:
+ *   DISCORD_ALLOWED_USER_IDS — comma-separated Discord user IDs to allow.
+ *   If set, messages from other users are ignored.
+ *
  * Required bot intents (Gateway subscribe):
  *   GUILD_MESSAGES (1 << 9) = 512
  *   DIRECT_MESSAGES (1 << 12) = 4096
@@ -17,7 +21,7 @@
  */
 
 use crate::protocol::ProtocolEvent;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
@@ -97,11 +101,53 @@ fn build_heartbeat_payload(sequence: Option<u64>) -> GatewayPayload {
     }
 }
 
+fn parse_allowed_discord_user_ids(raw: &str) -> HashSet<String> {
+    raw.split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .collect()
+}
+
+fn load_allowed_discord_user_ids_from_env() -> Option<HashSet<String>> {
+    let raw = std::env::var("DISCORD_ALLOWED_USER_IDS").ok()?;
+    let ids = parse_allowed_discord_user_ids(&raw);
+    if ids.is_empty() { None } else { Some(ids) }
+}
+
+fn should_forward_discord_message(
+    msg: &DiscordMessage,
+    bot_user_id: Option<&str>,
+    allowed_user_ids: Option<&HashSet<String>>,
+) -> bool {
+    if let Some(bot_id) = bot_user_id {
+        if msg.author.id == bot_id {
+            return false;
+        }
+    }
+    if msg.author.bot.unwrap_or(false) {
+        return false;
+    }
+    if msg.content.trim().is_empty() {
+        return false;
+    }
+    if let Some(ids) = allowed_user_ids {
+        if !ids.contains(&msg.author.id) {
+            return false;
+        }
+    }
+    true
+}
+
 pub async fn start_discord_adapter() -> Result<(), Box<dyn Error>> {
     let token = std::env::var("DISCORD_BOT_TOKEN")
         .map_err(|_| "DISCORD_BOT_TOKEN environment variable not set")?;
+    let allowed_user_ids = load_allowed_discord_user_ids_from_env();
 
     println!("Discord adapter starting...");
+    if let Some(ids) = &allowed_user_ids {
+        println!("Discord author allowlist enabled: {} user id(s)", ids.len());
+    }
 
     let bridge_stream = UnixStream::connect(SOCKET_PATH).await.map_err(|e| {
         format!(
@@ -194,14 +240,23 @@ pub async fn start_discord_adapter() -> Result<(), Box<dyn Error>> {
                             Some("MESSAGE_CREATE") => {
                                 if let Some(d) = &payload.d {
                                     if let Ok(msg) = serde_json::from_value::<DiscordMessage>(d.clone()) {
-                                        // Ignore messages from the bot itself
-                                        if let Some(ref bot_id) = bot_user_id {
-                                            if &msg.author.id == bot_id { continue; }
+                                        let is_allowed_sender = allowed_user_ids
+                                            .as_ref()
+                                            .map(|ids| ids.contains(&msg.author.id))
+                                            .unwrap_or(true);
+                                        if !should_forward_discord_message(
+                                            &msg,
+                                            bot_user_id.as_deref(),
+                                            allowed_user_ids.as_ref(),
+                                        ) {
+                                            if !is_allowed_sender && !msg.author.bot.unwrap_or(false) {
+                                                println!(
+                                                    "Ignoring Discord message from non-allowed user: {} ({})",
+                                                    msg.author.username, msg.author.id
+                                                );
+                                            }
+                                            continue;
                                         }
-                                        // Ignore messages from other bots
-                                        if msg.author.bot.unwrap_or(false) { continue; }
-
-                                        if msg.content.is_empty() { continue; }
 
                                         let event = transform_discord_message(
                                             &msg.content,
@@ -406,5 +461,46 @@ mod tests {
         let json = serde_json::to_string(&payload).expect("heartbeat payload must serialize");
         assert!(json.contains(r#""op":1"#));
         assert!(json.contains(r#""d":null"#), "Discord heartbeat must include d:null before first sequence");
+    }
+
+    fn sample_message(author_id: &str) -> DiscordMessage {
+        DiscordMessage {
+            id: "msg1".to_string(),
+            channel_id: "ch1".to_string(),
+            content: "hello".to_string(),
+            author: DiscordUser {
+                id: author_id.to_string(),
+                username: "user".to_string(),
+                bot: Some(false),
+            },
+        }
+    }
+
+    #[test]
+    fn test_parse_allowed_discord_user_ids_trims_and_dedups() {
+        let ids = parse_allowed_discord_user_ids(" 123 , , 456,123 ");
+        assert_eq!(ids.len(), 2);
+        assert!(ids.contains("123"));
+        assert!(ids.contains("456"));
+    }
+
+    #[test]
+    fn test_should_forward_discord_message_rejects_unlisted_user_when_allowlist_enabled() {
+        let msg = sample_message("user-2");
+        let allowed = parse_allowed_discord_user_ids("user-1");
+        assert!(
+            !should_forward_discord_message(&msg, Some("bot-1"), Some(&allowed)),
+            "messages from users outside allowlist should be ignored",
+        );
+    }
+
+    #[test]
+    fn test_should_forward_discord_message_accepts_listed_user_when_allowlist_enabled() {
+        let msg = sample_message("user-1");
+        let allowed = parse_allowed_discord_user_ids("user-1,user-2");
+        assert!(
+            should_forward_discord_message(&msg, Some("bot-1"), Some(&allowed)),
+            "messages from allowed users should be forwarded",
+        );
     }
 }

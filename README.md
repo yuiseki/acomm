@@ -76,6 +76,12 @@ acomm --publish "Hello"  # Send one message, then exit
 acomm --subscribe   # Stream all events to stdout
 ```
 
+### Discord Adapter
+
+- Required: `DISCORD_BOT_TOKEN`
+- Optional: `DISCORD_ALLOWED_USER_IDS` (comma-separated Discord user IDs)
+  - When set, `acomm --discord` ignores messages from users not in the list.
+
 ## TUI (acomm-tui)
 
 ### Global keys
