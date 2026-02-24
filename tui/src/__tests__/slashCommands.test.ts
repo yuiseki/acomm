@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseSlashCommand, getSlashCompletions, SLASH_COMMANDS } from '../slashCommands.js';
+import { parseSlashCommand, getSelectedSlashCompletion, getSlashCompletions, SLASH_COMMANDS } from '../slashCommands.js';
 
 describe('parseSlashCommand', () => {
   it('returns null for non-slash input', () => {
@@ -121,5 +121,21 @@ describe('getSlashCompletions', () => {
       expect(typeof r.command).toBe('string');
       expect(typeof r.description).toBe('string');
     }
+  });
+});
+
+describe('getSelectedSlashCompletion', () => {
+  it('returns null when there are no completions', () => {
+    expect(getSelectedSlashCompletion([], 0)).toBeNull();
+  });
+
+  it('returns the selected completion when index is valid', () => {
+    const completions = getSlashCompletions('/mo');
+    expect(getSelectedSlashCompletion(completions, 0)?.command).toBe('model');
+  });
+
+  it('falls back to the first completion when index is out of range', () => {
+    const completions = getSlashCompletions('/');
+    expect(getSelectedSlashCompletion(completions, 999)?.command).toBe(completions[0]?.command);
   });
 });

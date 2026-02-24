@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeInsertedInput, shouldInsertNewline } from '../inputKeyHelpers.js';
+import { isTabCompleteTrigger, normalizeInsertedInput, shouldInsertNewline } from '../inputKeyHelpers.js';
 
 describe('shouldInsertNewline', () => {
   it('does not treat Shift+Enter as newline insertion (unsupported)', () => {
@@ -44,5 +44,19 @@ describe('normalizeInsertedInput', () => {
   it('preserves internal newlines for multiline paste', () => {
     expect(normalizeInsertedInput('A\nB')).toBe('A\nB');
     expect(normalizeInsertedInput('A\nB\n')).toBe('A\nB');
+  });
+});
+
+describe('isTabCompleteTrigger', () => {
+  it('returns true for Ink tab key objects even when input is empty', () => {
+    expect(isTabCompleteTrigger('', { tab: true })).toBe(true);
+  });
+
+  it('returns true for raw tab character input', () => {
+    expect(isTabCompleteTrigger('\t', { tab: false })).toBe(true);
+  });
+
+  it('returns false for non-tab input', () => {
+    expect(isTabCompleteTrigger('a', { tab: false })).toBe(false);
   });
 });

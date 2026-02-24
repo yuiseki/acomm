@@ -29,7 +29,7 @@ import {
   rowColToOffset,
   wrapLine,
 } from './textHelpers.js';
-import { normalizeInsertedInput, shouldInsertNewline } from './inputKeyHelpers.js';
+import { isTabCompleteTrigger, normalizeInsertedInput, shouldInsertNewline } from './inputKeyHelpers.js';
 
 interface Props {
   value: string;
@@ -45,6 +45,8 @@ interface Props {
   onHistoryDown: () => void;
   /** Called when Tab is pressed; used to confirm a slash command autocomplete. */
   onTabComplete?: () => void;
+  /** Called when Enter is pressed while slash command completions are visible. */
+  onAutocompleteSubmit?: () => void;
   /** When true, show "Tab=complete" hint instead of history hint. */
   hasCompletions?: boolean;
 }
@@ -62,6 +64,7 @@ export default function MultilineInput({
   onHistoryUp,
   onHistoryDown,
   onTabComplete,
+  onAutocompleteSubmit,
   hasCompletions = false,
 }: Props): React.JSX.Element {
   const rootRef = useRef<DOMElement | null>(null);
@@ -82,6 +85,10 @@ export default function MultilineInput({
 
       // --- submit: plain Enter ---
       if (key.return) {
+        if (hasCompletions && onAutocompleteSubmit) {
+          onAutocompleteSubmit();
+          return;
+        }
         if (value.trim()) onSubmit(value);
         return;
       }
@@ -154,7 +161,7 @@ export default function MultilineInput({
       if (key.escape) return;
 
       // --- Tab — trigger slash command autocomplete ---
-      if (input === '\t') {
+      if (isTabCompleteTrigger(input, key)) {
         onTabComplete?.();
         return;
       }
@@ -167,7 +174,7 @@ export default function MultilineInput({
         onChangeValue(next, cursorOffset + insertText.length);
       }
     },
-    [value, cursorOffset, isProcessing, onChangeCursor, onChangeValue, onSubmit, onHistoryUp, onHistoryDown, onTabComplete],
+    [value, cursorOffset, isProcessing, onChangeCursor, onChangeValue, onSubmit, onHistoryUp, onHistoryDown, onTabComplete, onAutocompleteSubmit, hasCompletions],
   );
 
   useInput(handleInput as any, { isActive });

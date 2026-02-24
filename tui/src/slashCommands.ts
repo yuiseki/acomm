@@ -54,6 +54,17 @@ export function getSlashCompletions(input: string): SlashCommandDef[] {
   return SLASH_COMMANDS.filter((cmd) => cmd.command.startsWith(prefix));
 }
 
+/**
+ * Returns the currently selected completion, falling back to the first entry.
+ */
+export function getSelectedSlashCompletion(
+  completions: SlashCommandDef[],
+  selectedIndex: number,
+): SlashCommandDef | null {
+  if (completions.length === 0) return null;
+  return completions[selectedIndex] ?? completions[0] ?? null;
+}
+
 // ---------- Command parser ----------
 
 /**

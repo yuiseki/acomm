@@ -22,7 +22,7 @@ import MultilineInput from './MultilineInput.js';
 import SelectionMenu from './SelectionMenu.js';
 import SlashAutocomplete from './SlashAutocomplete.js';
 import SessionBrowser from './SessionBrowser.js';
-import { parseSlashCommand, getSlashCompletions } from './slashCommands.js';
+import { parseSlashCommand, getSelectedSlashCompletion, getSlashCompletions } from './slashCommands.js';
 import { renderMarkdown } from './renderMarkdown.js';
 import { saveSessionTurn, loadRecentTurns, type SessionTurn } from './sessionStorage.js';
 import { buildInitialProviderSyncCommand } from './startupProviderSync.js';
@@ -178,10 +178,9 @@ export default function App({ bridge, channel, initialProvider = 'Gemini', subsc
 
   // Tab handler: insert the currently selected completion into the input.
   const handleTabComplete = useCallback(() => {
-    if (slashCompletions.length === 0) return;
-    const cmd = slashCompletions[autocompleteIdx]?.command ?? slashCompletions[0]?.command;
-    if (!cmd) return;
-    const newVal = `/${cmd} `;
+    const selected = getSelectedSlashCompletion(slashCompletions, autocompleteIdx);
+    if (!selected) return;
+    const newVal = `/${selected.command} `;
     setInputValue(newVal);
     setCursorOffset(newVal.length);
     setAutocompleteDismissed(true);
@@ -333,6 +332,15 @@ export default function App({ bridge, channel, initialProvider = 'Gemini', subsc
     },
     [history, isProcessing, channel, activeProvider, bridge],
   );
+
+  // Enter while slash autocomplete is visible executes the selected command
+  // immediately (e.g. "/mode" + Enter => open /model menu).
+  const handleAutocompleteSubmit = useCallback(() => {
+    const selected = getSelectedSlashCompletion(slashCompletions, autocompleteIdx);
+    if (!selected) return;
+    setAutocompleteDismissed(true);
+    handleSubmit(`/${selected.command}`);
+  }, [slashCompletions, autocompleteIdx, handleSubmit]);
 
   // --- history navigation ---
   const handleHistoryUp = useCallback(() => {
@@ -488,6 +496,7 @@ export default function App({ bridge, channel, initialProvider = 'Gemini', subsc
             onHistoryUp={handleHistoryUp}
             onHistoryDown={handleHistoryDown}
             onTabComplete={handleTabComplete}
+            onAutocompleteSubmit={handleAutocompleteSubmit}
           />
         </>
       )}

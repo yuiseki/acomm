@@ -36,7 +36,7 @@ export default function SlashAutocomplete({ completions, selectedIndex }: Props)
         );
       })}
       <Box paddingLeft={1}>
-        <Text>{chalk.dim('Tab=complete  Esc=dismiss')}</Text>
+        <Text>{chalk.dim('Tab=complete  Enter=run  Esc=dismiss')}</Text>
       </Box>
     </Box>
   );

@@ -4,6 +4,7 @@ export interface InputKeyLike {
   meta?: boolean;
   alt?: boolean;
   ctrl?: boolean;
+  tab?: boolean;
 }
 
 /**
@@ -39,4 +40,12 @@ export function normalizeInsertedInput(input: string): string {
 
   // Preserve multiline paste content; only strip trailing line endings.
   return input.replace(/[\r\n]+$/, '');
+}
+
+/**
+ * Ink may surface Tab as `key.tab=true` with empty `input`.
+ * Keep support for raw '\t' for compatibility with alternative input paths.
+ */
+export function isTabCompleteTrigger(input: string, key: InputKeyLike): boolean {
+  return Boolean(key.tab) || input === '\t';
 }
