@@ -8,8 +8,11 @@
  * Required environment variables:
  *   DISCORD_BOT_TOKEN — bot token from the Discord Developer Portal
  *
- * Required bot intents (set in Developer Portal):
+ * Required bot intents (Gateway subscribe):
  *   GUILD_MESSAGES (1 << 9) = 512
+ *   DIRECT_MESSAGES (1 << 12) = 4096
+ *
+ * Optional (for reading guild message content reliably):
  *   MESSAGE_CONTENT (1 << 15) = 32768
  */
 
@@ -35,8 +38,11 @@ const OP_IDENTIFY: u64 = 2;
 const OP_HELLO: u64 = 10;
 const OP_HEARTBEAT_ACK: u64 = 11;
 
-/// Gateway intents: GUILD_MESSAGES | MESSAGE_CONTENT
-const GATEWAY_INTENTS: u64 = (1 << 9) | (1 << 15);
+/// Gateway intents: GUILD_MESSAGES | DIRECT_MESSAGES
+///
+/// MESSAGE_CONTENT is intentionally omitted here so bots can connect without
+/// enabling the privileged intent. DM text content is still available.
+const GATEWAY_INTENTS: u64 = (1 << 9) | (1 << 12);
 
 #[derive(Debug, Serialize, Deserialize)]
 struct GatewayPayload {
@@ -65,6 +71,32 @@ pub struct DiscordUser {
     pub bot: Option<bool>,
 }
 
+fn build_identify_payload(token: &str) -> GatewayPayload {
+    GatewayPayload {
+        op: OP_IDENTIFY,
+        d: Some(json!({
+            "token": token,
+            "intents": GATEWAY_INTENTS,
+            "properties": {
+                "os": "linux",
+                "browser": "acomm",
+                "device": "acomm"
+            }
+        })),
+        s: None,
+        t: None,
+    }
+}
+
+fn build_heartbeat_payload(sequence: Option<u64>) -> GatewayPayload {
+    GatewayPayload {
+        op: OP_HEARTBEAT,
+        d: Some(sequence.map_or(Value::Null, |s| json!(s))),
+        s: None,
+        t: None,
+    }
+}
+
 pub async fn start_discord_adapter() -> Result<(), Box<dyn Error>> {
     let token = std::env::var("DISCORD_BOT_TOKEN")
         .map_err(|_| "DISCORD_BOT_TOKEN environment variable not set")?;
@@ -77,9 +109,11 @@ pub async fn start_discord_adapter() -> Result<(), Box<dyn Error>> {
             e
         )
     })?;
+    println!("Connected to acomm bridge.");
     let (bridge_reader, mut bridge_writer) = tokio::io::split(bridge_stream);
     let mut bridge_lines = BufReader::new(bridge_reader).lines();
 
+    println!("Connecting to Discord Gateway: {}...", DISCORD_GATEWAY_URL);
     let (ws_stream, _) = connect_async(DISCORD_GATEWAY_URL).await?;
     let (mut ws_sink, mut ws_stream) = ws_stream.split();
 
@@ -105,7 +139,15 @@ pub async fn start_discord_adapter() -> Result<(), Box<dyn Error>> {
 
                 let text = match msg {
                     Message::Text(t) => t,
-                    Message::Close(_) => return Err("Discord Gateway closed connection".into()),
+                    Message::Close(frame) => {
+                        if let Some(frame) = frame {
+                            return Err(format!(
+                                "Discord Gateway closed connection: code={} reason={}",
+                                frame.code, frame.reason
+                            ).into());
+                        }
+                        return Err("Discord Gateway closed connection".into());
+                    }
                     _ => continue,
                 };
 
@@ -126,20 +168,7 @@ pub async fn start_discord_adapter() -> Result<(), Box<dyn Error>> {
                             std::time::Duration::from_millis(heartbeat_interval_ms),
                         ));
                         // Send IDENTIFY
-                        let identify = GatewayPayload {
-                            op: OP_IDENTIFY,
-                            d: Some(json!({
-                                "token": token,
-                                "intents": GATEWAY_INTENTS,
-                                "properties": {
-                                    "os": "linux",
-                                    "browser": "acomm",
-                                    "device": "acomm"
-                                }
-                            })),
-                            s: None,
-                            t: None,
-                        };
+                        let identify = build_identify_payload(&token);
                         ws_sink.send(Message::Text(serde_json::to_string(&identify)?.into())).await?;
                         println!("Sent IDENTIFY to Discord Gateway.");
                     }
@@ -148,7 +177,7 @@ pub async fn start_discord_adapter() -> Result<(), Box<dyn Error>> {
                     }
                     OP_HEARTBEAT => {
                         // Server-requested heartbeat
-                        let hb = GatewayPayload { op: OP_HEARTBEAT, d: sequence.map(|s| json!(s)), s: None, t: None };
+                        let hb = build_heartbeat_payload(sequence);
                         ws_sink.send(Message::Text(serde_json::to_string(&hb)?.into())).await?;
                     }
                     OP_DISPATCH => {
@@ -200,12 +229,7 @@ pub async fn start_discord_adapter() -> Result<(), Box<dyn Error>> {
                     std::future::pending::<tokio::time::Instant>().await
                 }
             } => {
-                let hb = GatewayPayload {
-                    op: OP_HEARTBEAT,
-                    d: sequence.map(|s| json!(s)),
-                    s: None,
-                    t: None,
-                };
+                let hb = build_heartbeat_payload(sequence);
                 ws_sink.send(Message::Text(serde_json::to_string(&hb)?.into())).await?;
             }
 
@@ -292,6 +316,7 @@ pub fn transform_discord_message(
     }
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 /// Format a bot reply with a prefix tag (for readability in Discord).
 pub fn format_discord_reply(content: &str) -> String {
     format!("**[YuiClaw]** {}", content)
@@ -350,5 +375,36 @@ mod tests {
         let reply = format_discord_reply("test message");
         assert!(!reply.is_empty());
         assert!(reply.contains("test message"));
+    }
+
+    #[test]
+    fn test_gateway_intents_include_direct_messages_for_dm_support() {
+        const DIRECT_MESSAGES_INTENT: u64 = 1 << 12;
+        assert_ne!(
+            GATEWAY_INTENTS & DIRECT_MESSAGES_INTENT,
+            0,
+            "Discord DM MESSAGE_CREATE requires DIRECT_MESSAGES intent",
+        );
+    }
+
+    #[test]
+    fn test_identify_payload_uses_discord_properties_keys() {
+        let payload = build_identify_payload("dummy-token");
+        let d = payload.d.expect("identify payload must include d");
+        let props = d.get("properties").expect("identify payload must include properties");
+        assert!(props.get("os").is_some(), "Discord IDENTIFY requires os");
+        assert!(props.get("browser").is_some(), "Discord IDENTIFY requires browser");
+        assert!(props.get("device").is_some(), "Discord IDENTIFY requires device");
+        assert!(props.get("$os").is_none(), "$os key should not be sent");
+        assert!(props.get("$browser").is_none(), "$browser key should not be sent");
+        assert!(props.get("$device").is_none(), "$device key should not be sent");
+    }
+
+    #[test]
+    fn test_heartbeat_payload_includes_null_d_when_sequence_absent() {
+        let payload = build_heartbeat_payload(None);
+        let json = serde_json::to_string(&payload).expect("heartbeat payload must serialize");
+        assert!(json.contains(r#""op":1"#));
+        assert!(json.contains(r#""d":null"#), "Discord heartbeat must include d:null before first sequence");
     }
 }

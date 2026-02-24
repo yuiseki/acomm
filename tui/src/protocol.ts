@@ -3,10 +3,10 @@
  * Mirrors Rust's ProtocolEvent with serde external tagging.
  *
  * Example JSON from the bridge:
- *   {"Prompt":{"text":"hello","tool":null,"channel":"tui"}}
+ *   {"Prompt":{"text":"hello","provider":null,"channel":"tui"}}
  *   {"AgentChunk":{"chunk":"...","channel":null}}
  *   {"AgentDone":{"channel":null}}
- *   {"ProviderSwitched":{"tool":"Gemini"}}
+ *   {"ProviderSwitched":{"provider":"Gemini"}}
  */
 
 export type AgentProvider = 'Gemini' | 'Claude' | 'Codex' | 'OpenCode' | 'Mock';
@@ -46,15 +46,15 @@ export function providerCommandName(provider: AgentProvider): string {
 export function normalizeProvider(name: string | null | undefined): AgentProvider {
   if (!name) return 'Gemini';
   const target = name.toLowerCase();
-  for (const tool of AGENT_PROVIDERS) {
-    if (tool.toLowerCase() === target) return tool;
+  for (const provider of AGENT_PROVIDERS) {
+    if (provider.toLowerCase() === target) return provider;
   }
   if ('mock'.toLowerCase() === target) return 'Mock';
   return 'Gemini';
 }
 
-/** Safely gets the model list for a tool, falling back to Gemini if the tool is invalid. */
-export function getModelsForProvider(tool: AgentProvider | string | null | undefined): string[] {
-  const normalized = normalizeProvider(tool as any);
+/** Safely gets the model list for a provider, falling back to Gemini if the provider is invalid. */
+export function getModelsForProvider(provider: AgentProvider | string | null | undefined): string[] {
+  const normalized = normalizeProvider(provider as any);
   return PROVIDER_MODELS[normalized] ?? PROVIDER_MODELS['Gemini'];
 }

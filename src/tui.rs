@@ -219,23 +219,23 @@ impl App {
             }
             ProtocolEvent::AgentChunk { chunk, .. } => {
                 if chunk.is_empty() { return; }
-                let tool_prefix = format!("[{}] ", self.active_cli.command_name());
+                let provider_prefix = format!("[{}] ", self.active_cli.command_name());
                 
                 for line in chunk.split_inclusive('\n') {
                     let mut pushed = false;
                     if let Some(last) = self.messages.last_mut() {
-                        if last.starts_with(&tool_prefix) && !last.ends_with('\n') {
+                        if last.starts_with(&provider_prefix) && !last.ends_with('\n') {
                             last.push_str(line);
                             pushed = true;
                         }
                     }
                     if !pushed {
                         let is_just_nl = line == "\n";
-                        let prev_is_just_prefix = self.messages.last().map_or(false, |m| m == &format!("{tool_prefix}\n"));
+                        let prev_is_just_prefix = self.messages.last().map_or(false, |m| m == &format!("{provider_prefix}\n"));
                         if is_just_nl && prev_is_just_prefix {
                             // Skip redundant
                         } else {
-                            self.messages.push(format!("{tool_prefix}{line}"));
+                            self.messages.push(format!("{provider_prefix}{line}"));
                         }
                     }
                 }
@@ -322,13 +322,13 @@ where <B as Backend>::Error: 'static {
                             KeyCode::Char('i') => app.input_mode = InputMode::Editing,
                             KeyCode::Char('q') => return Ok(()),
                             KeyCode::Char('1') | KeyCode::Char('2') | KeyCode::Char('3') | KeyCode::Char('4') => {
-                                let tool_name = match key.code {
+                                let provider_name = match key.code {
                                     KeyCode::Char('1') => "gemini",
                                     KeyCode::Char('2') => "claude",
                                     KeyCode::Char('3') => "codex",
                                     _ => "opencode",
                                 };
-                                let event = ProtocolEvent::Prompt { text: format!("/provider {tool_name}"), provider: None, channel: None };
+                                let event = ProtocolEvent::Prompt { text: format!("/provider {provider_name}"), provider: None, channel: None };
                                 if let Ok(j) = serde_json::to_string(&event) { let _ = writer.write_all(format!("{}\n", j).as_bytes()).await; }
                             }
                             KeyCode::Up | KeyCode::Char('k') => {
