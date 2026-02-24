@@ -34,6 +34,9 @@ use tokio_tungstenite::tungstenite::Message;
 const SOCKET_PATH: &str = "/tmp/acomm.sock";
 const DISCORD_GATEWAY_URL: &str = "wss://gateway.discord.gg/?v=10&encoding=json";
 const DISCORD_API_BASE: &str = "https://discord.com/api/v10";
+const DISCORD_SAFE_MESSAGE_LIMIT: usize = 1900;
+const DEFAULT_DISCORD_PROVIDER_NAME: &str = "gemini";
+const DEFAULT_DISCORD_MODEL_NAME: &str = "gemini-2.5-flash-lite";
 
 /// Gateway opcodes
 const OP_DISPATCH: u64 = 0;
@@ -73,6 +76,13 @@ pub struct DiscordUser {
     pub id: String,
     pub username: String,
     pub bot: Option<bool>,
+}
+
+#[derive(Debug, Clone)]
+struct DiscordReplyBuffer {
+    content: String,
+    provider: String,
+    model: String,
 }
 
 fn build_identify_payload(token: &str) -> GatewayPayload {
@@ -139,6 +149,89 @@ fn should_forward_discord_message(
     true
 }
 
+fn default_model_for_provider_name(provider_name: &str) -> Option<&'static str> {
+    match provider_name {
+        "gemini" => Some("gemini-2.5-flash-lite"),
+        "claude" => Some("claude-sonnet-4-6"),
+        "codex" => Some("gpt-5.3-codex"),
+        "dummy" => Some("echo"),
+        "mock" => Some("mock-model"),
+        _ => None,
+    }
+}
+
+fn discord_channel_id_from_bridge_channel(channel: &str) -> Option<&str> {
+    let mut parts = channel.splitn(3, ':');
+    match (parts.next(), parts.next()) {
+        (Some("discord"), Some(channel_id)) if !channel_id.is_empty() => Some(channel_id),
+        _ => None,
+    }
+}
+
+fn truncate_for_discord(content: &str) -> String {
+    let trimmed = content.trim_end();
+    if trimmed.chars().count() <= DISCORD_SAFE_MESSAGE_LIMIT {
+        return trimmed.to_string();
+    }
+
+    let mut out = String::new();
+    for (idx, ch) in trimmed.chars().enumerate() {
+        if idx >= DISCORD_SAFE_MESSAGE_LIMIT.saturating_sub(1) {
+            break;
+        }
+        out.push(ch);
+    }
+    out.push('…');
+    out
+}
+
+fn format_discord_agent_reply_with_status(content: &str, provider: &str, model: &str) -> String {
+    let provider = provider.trim();
+    let provider = if provider.is_empty() {
+        DEFAULT_DISCORD_PROVIDER_NAME
+    } else {
+        provider
+    };
+    let model = model.trim();
+    let model = if model.is_empty() {
+        default_model_for_provider_name(provider).unwrap_or("unknown")
+    } else {
+        model
+    };
+
+    let suffix = format!("__{}:{}__", provider, model);
+    let body = content.trim_end();
+    if body.is_empty() {
+        return truncate_for_discord(&suffix);
+    }
+
+    let separator = "\n\n";
+    let reserved = suffix.chars().count() + separator.chars().count();
+    if reserved >= DISCORD_SAFE_MESSAGE_LIMIT {
+        return truncate_for_discord(&suffix);
+    }
+
+    let body_budget = DISCORD_SAFE_MESSAGE_LIMIT - reserved;
+    let body_chars = body.chars().count();
+    let body_part = if body_chars <= body_budget {
+        body.to_string()
+    } else if body_budget <= 1 {
+        "…".to_string()
+    } else {
+        let mut truncated = String::new();
+        for (idx, ch) in body.chars().enumerate() {
+            if idx >= body_budget - 1 {
+                break;
+            }
+            truncated.push(ch);
+        }
+        truncated.push('…');
+        truncated
+    };
+
+    format!("{body_part}{separator}{suffix}")
+}
+
 /// Send a proactive agent notification to a Discord channel.
 ///
 /// Required environment variables:
@@ -181,7 +274,9 @@ pub async fn start_discord_adapter() -> Result<(), Box<dyn Error>> {
     let mut heartbeat_interval_ms: u64 = 41250; // default fallback
     let mut sequence: Option<u64> = None;
     let mut bot_user_id: Option<String> = None;
-    let mut reply_buffers: HashMap<String, String> = HashMap::new();
+    let mut active_provider_name = DEFAULT_DISCORD_PROVIDER_NAME.to_string();
+    let mut active_model_name = DEFAULT_DISCORD_MODEL_NAME.to_string();
+    let mut reply_buffers: HashMap<String, DiscordReplyBuffer> = HashMap::new();
     let mut typing_tasks: HashMap<String, tokio::task::JoinHandle<()>> = HashMap::new();
     let mut bridge_sync_done = false;
 
@@ -310,6 +405,15 @@ pub async fn start_discord_adapter() -> Result<(), Box<dyn Error>> {
                     None => break,
                 };
                 if let Ok(event) = serde_json::from_str::<ProtocolEvent>(&line) {
+                    if let ProtocolEvent::ProviderSwitched { ref provider } = event {
+                        active_provider_name = provider.command_name().to_string();
+                        if let Some(model) = default_model_for_provider_name(&active_provider_name) {
+                            active_model_name = model.to_string();
+                        }
+                    }
+                    if let ProtocolEvent::ModelSwitched { ref model } = event {
+                        active_model_name = model.clone();
+                    }
                     if !bridge_sync_done {
                         if matches!(event, ProtocolEvent::BridgeSyncDone { .. }) {
                             bridge_sync_done = true;
@@ -318,14 +422,31 @@ pub async fn start_discord_adapter() -> Result<(), Box<dyn Error>> {
                         continue;
                     }
                     match event {
-                        ProtocolEvent::Prompt { channel: Some(ref ch), .. }
+                        ProtocolEvent::Prompt { provider, channel: Some(ref ch), .. }
                             if ch.starts_with("discord:") =>
                         {
                             let key = ch.to_string();
-                            reply_buffers.insert(key.clone(), String::new());
+                            let provider_name = provider
+                                .as_ref()
+                                .map(|p| p.command_name().to_string())
+                                .unwrap_or_else(|| active_provider_name.clone());
+                            let model_name = if active_model_name.trim().is_empty() {
+                                default_model_for_provider_name(&provider_name)
+                                    .unwrap_or("unknown")
+                                    .to_string()
+                            } else {
+                                active_model_name.clone()
+                            };
+                            reply_buffers.insert(
+                                key.clone(),
+                                DiscordReplyBuffer {
+                                    content: String::new(),
+                                    provider: provider_name,
+                                    model: model_name,
+                                },
+                            );
                             // Start typing indicator while agent processes.
-                            let parts: Vec<&str> = ch.splitn(3, ':').collect();
-                            if let Some(discord_channel_id) = parts.get(1).map(|s| s.to_string()) {
+                            if let Some(discord_channel_id) = discord_channel_id_from_bridge_channel(ch).map(str::to_string) {
                                 let token_clone = token.clone();
                                 let handle = tokio::spawn(async move {
                                     loop {
@@ -342,7 +463,7 @@ pub async fn start_discord_adapter() -> Result<(), Box<dyn Error>> {
                             if ch.starts_with("discord:") =>
                         {
                             if let Some(buf) = reply_buffers.get_mut(ch) {
-                                buf.push_str(chunk);
+                                buf.content.push_str(chunk);
                             }
                         }
                         ProtocolEvent::AgentDone { channel: Some(ref ch) }
@@ -352,15 +473,31 @@ pub async fn start_discord_adapter() -> Result<(), Box<dyn Error>> {
                             if let Some(handle) = typing_tasks.remove(ch.as_str()) {
                                 handle.abort();
                             }
-                            // channel format: "discord:<channel_id>:<message_id>"
-                            let parts: Vec<&str> = ch.splitn(3, ':').collect();
-                            let discord_channel_id = parts.get(1).unwrap_or(&"");
                             let key = ch.to_string();
-                            if let Some(content) = reply_buffers.remove(&key) {
-                                if !content.is_empty() {
-                                    let answer = extract_discord_answer(&content);
-                                    send_discord_message(&token, discord_channel_id, &answer).await?;
+                            if let Some(buf) = reply_buffers.remove(&key) {
+                                if !buf.content.is_empty() {
+                                    let answer = extract_discord_answer(&buf.content);
+                                    let formatted = format_discord_agent_reply_with_status(
+                                        &answer,
+                                        &buf.provider,
+                                        &buf.model,
+                                    );
+                                    if let Some(discord_channel_id) = discord_channel_id_from_bridge_channel(ch) {
+                                        send_discord_message(&token, discord_channel_id, &formatted).await?;
+                                    }
                                 }
+                            }
+                        }
+                        ProtocolEvent::SystemMessage { msg, channel: Some(ref ch) }
+                            if ch.starts_with("discord:") =>
+                        {
+                            if let Some(discord_channel_id) = discord_channel_id_from_bridge_channel(ch) {
+                                let formatted = format_discord_agent_reply_with_status(
+                                    &msg,
+                                    &active_provider_name,
+                                    &active_model_name,
+                                );
+                                send_discord_message(&token, discord_channel_id, &formatted).await?;
                             }
                         }
                         _ => {}
@@ -379,12 +516,8 @@ async fn send_discord_message(
     channel_id: &str,
     content: &str,
 ) -> Result<(), Box<dyn Error>> {
-    // Discord messages have a 2000-char limit; truncate if needed
-    let truncated = if content.len() > 1900 {
-        format!("{}…", &content[..1900])
-    } else {
-        content.to_string()
-    };
+    // Keep a safety margin below Discord's 2000-char limit and truncate by chars.
+    let truncated = truncate_for_discord(content);
 
     let client = reqwest::Client::new();
     let url = format!("{}/channels/{}/messages", DISCORD_API_BASE, channel_id);
@@ -530,6 +663,31 @@ mod tests {
         let reply = format_discord_reply("test message");
         assert!(!reply.is_empty());
         assert!(reply.contains("test message"));
+    }
+
+    #[test]
+    fn test_format_discord_agent_reply_with_status_appends_suffix() {
+        let reply = format_discord_agent_reply_with_status(
+            "pong",
+            "gemini",
+            "gemini-2.5-flash-lite",
+        );
+        assert!(reply.starts_with("pong"));
+        assert!(reply.ends_with("__gemini:gemini-2.5-flash-lite__"));
+        assert!(reply.contains("\n\n__gemini:gemini-2.5-flash-lite__"));
+        assert!(reply.chars().count() <= 1900);
+    }
+
+    #[test]
+    fn test_format_discord_agent_reply_with_status_preserves_suffix_when_truncated() {
+        let body = "あ".repeat(2500);
+        let reply = format_discord_agent_reply_with_status(
+            &body,
+            "claude",
+            "claude-sonnet-4-6",
+        );
+        assert!(reply.ends_with("__claude:claude-sonnet-4-6__"));
+        assert!(reply.chars().count() <= 1900);
     }
 
     #[test]

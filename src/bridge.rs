@@ -7,6 +7,67 @@ use tokio::sync::{broadcast, Mutex};
 
 const SOCKET_PATH: &str = "/tmp/acomm.sock";
 const MAX_BACKLOG: usize = 100;
+const DEFAULT_PROVIDER: AgentProvider = AgentProvider::Gemini;
+const DEFAULT_GEMINI_MODEL: &str = "gemini-2.5-flash-lite";
+const DEFAULT_CLAUDE_MODEL: &str = "claude-sonnet-4-6";
+const DEFAULT_CODEX_MODEL: &str = "gpt-5.3-codex";
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ProviderPreset {
+    provider: AgentProvider,
+    model: &'static str,
+}
+
+fn default_model_for_provider(provider: &AgentProvider) -> Option<&'static str> {
+    match provider {
+        AgentProvider::Gemini => Some(DEFAULT_GEMINI_MODEL),
+        AgentProvider::Claude => Some(DEFAULT_CLAUDE_MODEL),
+        AgentProvider::Codex => Some(DEFAULT_CODEX_MODEL),
+        AgentProvider::Dummy => Some("echo"),
+        AgentProvider::Mock => Some("mock-model"),
+        AgentProvider::OpenCode => None,
+    }
+}
+
+fn discord_magic_provider_preset(text: &str, channel: Option<&str>) -> Option<ProviderPreset> {
+    if !channel.unwrap_or_default().starts_with("discord:") {
+        return None;
+    }
+
+    match text.trim() {
+        "p-gemini" => Some(ProviderPreset {
+            provider: AgentProvider::Gemini,
+            model: DEFAULT_GEMINI_MODEL,
+        }),
+        "p-codex" => Some(ProviderPreset {
+            provider: AgentProvider::Codex,
+            model: DEFAULT_CODEX_MODEL,
+        }),
+        "p-claude" => Some(ProviderPreset {
+            provider: AgentProvider::Claude,
+            model: DEFAULT_CLAUDE_MODEL,
+        }),
+        _ => None,
+    }
+}
+
+fn apply_provider_preset(
+    tx: &Arc<broadcast::Sender<ProtocolEvent>>,
+    channel: Option<String>,
+    preset: ProviderPreset,
+) {
+    let provider_name = preset.provider.command_name().to_string();
+    let _ = tx.send(ProtocolEvent::ProviderSwitched {
+        provider: preset.provider.clone(),
+    });
+    let _ = tx.send(ProtocolEvent::ModelSwitched {
+        model: preset.model.to_string(),
+    });
+    let _ = tx.send(ProtocolEvent::SystemMessage {
+        msg: format!("Switched to {}:{}.", provider_name, preset.model),
+        channel,
+    });
+}
 
 pub struct BridgeState {
     pub active_provider: AgentProvider,
@@ -25,8 +86,8 @@ pub async fn start_bridge() -> Result<(), Box<dyn Error>> {
     let tx = Arc::new(tx);
     
     let state = Arc::new(Mutex::new(BridgeState {
-        active_provider: AgentProvider::Gemini,
-        active_model: None,
+        active_provider: DEFAULT_PROVIDER,
+        active_model: default_model_for_provider(&DEFAULT_PROVIDER).map(str::to_string),
         backlog: VecDeque::new(),
         session_manager: SessionManager::new(),
     }));
@@ -52,7 +113,7 @@ pub async fn start_bridge() -> Result<(), Box<dyn Error>> {
             if let ProtocolEvent::ProviderSwitched { ref provider } = event {
                 s.active_provider = provider.clone();
                 // Reset model selection when provider changes
-                s.active_model = None;
+                s.active_model = default_model_for_provider(provider).map(str::to_string);
             }
             if let ProtocolEvent::ModelSwitched { ref model } = event {
                 s.active_model = Some(model.clone());
@@ -124,13 +185,26 @@ async fn handle_bridge_connection(
                 if let Ok(event) = serde_json::from_str::<ProtocolEvent>(&line) {
                     match event {
                         ProtocolEvent::Prompt { ref text, ref provider, .. } => {
+                            let channel = event.clone_channel();
+                            if let Some(preset) = discord_magic_provider_preset(text, channel.as_deref()) {
+                                apply_provider_preset(&tx_loop, channel, preset);
+                                continue;
+                            }
                             if text.starts_with('/') {
                                 handle_command(text, &tx_loop, &state).await?;
                             } else {
-                                let channel = event.clone_channel();
-                                let active_provider = match provider {
-                                    Some(t) => t.clone(),
-                                    None => state.lock().await.active_provider.clone(),
+                                let (active_provider, active_model, manager) = {
+                                    let s = state.lock().await;
+                                    let selected_provider = match provider {
+                                        Some(t) => t.clone(),
+                                        None => s.active_provider.clone(),
+                                    };
+                                    let selected_model = if selected_provider == s.active_provider {
+                                        s.active_model.clone()
+                                    } else {
+                                        default_model_for_provider(&selected_provider).map(str::to_string)
+                                    };
+                                    (selected_provider, selected_model, s.session_manager.clone())
                                 };
                                 let _ = tx_loop.send(ProtocolEvent::Prompt { 
                                     text: text.clone(), 
@@ -140,16 +214,19 @@ async fn handle_bridge_connection(
                                 let _ = tx_loop.send(ProtocolEvent::StatusUpdate { is_processing: true, channel: channel.clone() });
                                 
                                 let tx_inner = Arc::clone(&tx_loop);
-                                let state_inner = Arc::clone(&state);
                                 let text_inner = text.clone();
                                 let channel_inner = channel.clone();
-                                let manager = state_inner.lock().await.session_manager.clone();
+                                let active_model_inner = active_model.clone();
                                 
                                 tokio::spawn(async move {
                                     let tx_chunk = Arc::clone(&tx_inner);
                                     let tx_err = Arc::clone(&tx_inner);
                                     let ch_chunk = channel_inner.clone();
-                                    match manager.execute_with_resume(active_provider, &text_inner, move |chunk| {
+                                    match manager.execute_with_resume_with_model(
+                                        active_provider,
+                                        active_model_inner,
+                                        &text_inner,
+                                        move |chunk| {
                                         let _ = tx_chunk.send(ProtocolEvent::AgentChunk { chunk, channel: ch_chunk.clone() });
                                     }).await {
                                         Ok(_) => {},
@@ -220,7 +297,11 @@ async fn handle_command(
                     "mock" => AgentProvider::Mock,
                     _ => return Ok(()),
                 };
+                let default_model = default_model_for_provider(&provider).map(str::to_string);
                 let _ = tx.send(ProtocolEvent::ProviderSwitched { provider });
+                if let Some(model) = default_model {
+                    let _ = tx.send(ProtocolEvent::ModelSwitched { model });
+                }
             }
         }
         "model" => {
@@ -232,8 +313,12 @@ async fn handle_command(
             let mut s = state.lock().await;
             s.backlog.clear();
             s.session_manager = SessionManager::new();
-            s.active_model = None;
+            s.active_model = default_model_for_provider(&s.active_provider).map(str::to_string);
+            let cleared_model = s.active_model.clone();
             let _ = tx.send(ProtocolEvent::SystemMessage { msg: "Cleared.".into(), channel: Some("bridge".into()) });
+            if let Some(model) = cleared_model {
+                let _ = tx.send(ProtocolEvent::ModelSwitched { model });
+            }
         }
         _ => {}
     }
@@ -316,6 +401,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_bridge_initial_sync_emits_gemini_default_provider_and_model() {
+        let _guard = BRIDGE_TEST_LOCK.lock().unwrap();
+        let _ = std::fs::remove_file(SOCKET_PATH);
+        tokio::spawn(async { let _ = start_bridge().await; });
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        let stream = UnixStream::connect(SOCKET_PATH).await.expect("Failed to connect");
+        let (reader, _) = tokio::io::split(stream);
+        let mut lines = BufReader::new(reader).lines();
+
+        let mut saw_provider = false;
+        let mut saw_model = false;
+        let start = std::time::Instant::now();
+        while start.elapsed() < Duration::from_secs(2) {
+            let line = match tokio::time::timeout(Duration::from_millis(200), lines.next_line()).await {
+                Ok(Ok(Some(line))) => line,
+                _ => break,
+            };
+
+            let ev: ProtocolEvent = match serde_json::from_str(&line) {
+                Ok(ev) => ev,
+                Err(_) => continue,
+            };
+
+            match ev {
+                ProtocolEvent::ProviderSwitched { provider } if provider == AgentProvider::Gemini => saw_provider = true,
+                ProtocolEvent::ModelSwitched { model } if model == "gemini-2.5-flash-lite" => saw_model = true,
+                ProtocolEvent::BridgeSyncDone {} => break,
+                _ => {}
+            }
+        }
+
+        assert!(saw_provider, "initial sync should include Gemini default provider");
+        assert!(saw_model, "initial sync should include gemini-2.5-flash-lite default model");
+    }
+
+    #[tokio::test]
     async fn test_handle_command_provider_dummy_switches_provider() {
         let (tx, mut rx) = broadcast::channel(8);
         let tx = Arc::new(tx);
@@ -330,5 +452,52 @@ mod tests {
 
         let ev = rx.recv().await.unwrap();
         assert!(matches!(ev, ProtocolEvent::ProviderSwitched { provider: AgentProvider::Dummy }));
+    }
+
+    #[tokio::test]
+    async fn test_handle_command_provider_codex_emits_default_model() {
+        let (tx, mut rx) = broadcast::channel(8);
+        let tx = Arc::new(tx);
+        let state = Mutex::new(BridgeState {
+            active_provider: AgentProvider::Gemini,
+            active_model: Some("gemini-2.5-flash-lite".into()),
+            backlog: VecDeque::new(),
+            session_manager: SessionManager::new(),
+        });
+
+        handle_command("/provider codex", &tx, &state).await.unwrap();
+
+        let ev1 = rx.recv().await.unwrap();
+        let ev2 = rx.recv().await.unwrap();
+        assert!(matches!(ev1, ProtocolEvent::ProviderSwitched { provider: AgentProvider::Codex }));
+        assert!(matches!(ev2, ProtocolEvent::ModelSwitched { model } if model == "gpt-5.3-codex"));
+    }
+
+    #[test]
+    fn test_discord_magic_provider_preset_for_gemini() {
+        let preset = discord_magic_provider_preset("p-gemini", Some("discord:1:2"))
+            .expect("p-gemini should map to a preset");
+        assert_eq!(preset.provider, AgentProvider::Gemini);
+        assert_eq!(preset.model, "gemini-2.5-flash-lite");
+    }
+
+    #[test]
+    fn test_discord_magic_provider_preset_for_codex_and_claude() {
+        let codex = discord_magic_provider_preset("p-codex", Some("discord:1:2"))
+            .expect("p-codex should map to codex preset");
+        assert_eq!(codex.provider, AgentProvider::Codex);
+        assert_eq!(codex.model, "gpt-5.3-codex");
+
+        let claude = discord_magic_provider_preset("p-claude", Some("discord:1:2"))
+            .expect("p-claude should map to claude preset");
+        assert_eq!(claude.provider, AgentProvider::Claude);
+        assert_eq!(claude.model, "claude-sonnet-4-6");
+    }
+
+    #[test]
+    fn test_discord_magic_provider_preset_ignores_non_discord_or_unknown_text() {
+        assert!(discord_magic_provider_preset("p-gemini", Some("tui")).is_none());
+        assert!(discord_magic_provider_preset("p-unknown", Some("discord:1:2")).is_none());
+        assert!(discord_magic_provider_preset("hello", Some("discord:1:2")).is_none());
     }
 }

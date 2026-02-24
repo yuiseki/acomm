@@ -8,7 +8,7 @@ Communication hub for AI agents and human interaction.
 - **Real-time Streaming**: Delivers agent responses in chunks as they are generated.
 - **Rich TUI**: CJK-aware multiline input with Emacs keybindings and interactive slash commands.
 - **Unified Protocol**: JSONL event bus connecting TUI, CLI, and adapter channels (ntfy, Slack, Discord).
-- **Multi-channel**: ntfy.sh fully supported; Slack adapter in progress; Discord planned.
+- **Multi-channel**: ntfy.sh and Discord adapters supported; Slack adapter in progress.
 
 ## Architecture
 
@@ -81,6 +81,15 @@ acomm --subscribe   # Stream all events to stdout
 - Required: `DISCORD_BOT_TOKEN`
 - Optional: `DISCORD_ALLOWED_USER_IDS` (comma-separated Discord user IDs)
   - When set, `acomm --discord` ignores messages from users not in the list.
+- Default agent session preset on bridge startup (useful for Discord):
+  - Provider: `gemini`
+  - Model: `gemini-2.5-flash-lite`
+- Discord-only magic words (to avoid `/` slash-command collisions):
+  - `p-gemini` → switch to `gemini:gemini-2.5-flash-lite`
+  - `p-codex` → switch to `codex:gpt-5.3-codex`
+  - `p-claude` → switch to `claude:claude-sonnet-4-6`
+- Discord replies sent after agent completion include a trailing status suffix such as:
+  - `__gemini:gemini-2.5-flash-lite__`
 
 ## TUI (acomm-tui)
 
