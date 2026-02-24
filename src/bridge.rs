@@ -248,8 +248,13 @@ mod tests {
     use tokio::net::UnixStream;
     use std::time::Duration;
 
+    // ブリッジテストは同じソケットパスを使うため並列実行すると競合する。
+    // static Mutex で排他制御し、常に1テストずつ実行する。
+    static BRIDGE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[tokio::test]
     async fn test_bridge_mock_flow() {
+        let _guard = BRIDGE_TEST_LOCK.lock().unwrap();
         let _ = std::fs::remove_file(SOCKET_PATH);
         tokio::spawn(async { let _ = start_bridge().await; });
         tokio::time::sleep(Duration::from_millis(500)).await;
@@ -285,6 +290,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_bridge_initial_sync_emits_completion_marker() {
+        let _guard = BRIDGE_TEST_LOCK.lock().unwrap();
         let _ = std::fs::remove_file(SOCKET_PATH);
         tokio::spawn(async { let _ = start_bridge().await; });
         tokio::time::sleep(Duration::from_millis(500)).await;

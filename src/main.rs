@@ -40,6 +40,11 @@ struct CliArgs {
     #[arg(long)] discord: bool,
     /// エージェントとしてメッセージを送信する (--discord / --slack / --ntfy で送信先を指定)
     #[arg(long)] agent: Option<String>,
+    /// ユーザーからの入力を1件受信して標準出力し、即終了する
+    /// (--discord / --slack / --ntfy でチャンネルをフィルタ可能)
+    #[arg(long)] receive: bool,
+    /// --receive のタイムアウト秒数。指定秒数内に入力がなければ exit 1 で終了する
+    #[arg(long)] timeout: Option<u64>,
 }
 
 const SOCKET_PATH: &str = "/tmp/acomm.sock";
@@ -76,6 +81,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
             }
         }
         return Ok(());
+    }
+
+    if args.receive {
+        return receive_from_bridge(args.discord, args.slack, args.ntfy, args.timeout).await;
     }
 
     if args.reset { return publish_to_bridge("/clear", Some("bridge")).await; }
@@ -173,6 +182,117 @@ fn display_event(event: &ProtocolEvent, active_provider_name: &mut String, is_st
     }
     io::Write::flush(&mut io::stdout())?;
     Ok(())
+}
+
+/// bridge に接続し、バックログをスキップしてから最初の Prompt イベントを待つ。
+/// チャンネルフィルタに合致した Prompt の text を stdout に出力して exit 0。
+/// timeout_secs 以内に合致する入力がなければ stderr にメッセージを出して exit 1。
+async fn receive_from_bridge(
+    discord: bool,
+    slack: bool,
+    ntfy: bool,
+    timeout_secs: Option<u64>,
+) -> Result<(), Box<dyn Error>> {
+    let stream = ensure_bridge_connection(false).await?;
+    let mut lines = BufReader::new(stream).lines();
+    let mut sync_done = false;
+
+    // デッドラインを一度だけ作成して pin する。
+    // タイムアウト未指定時は事実上無限大（≈584年）にする。
+    let timeout_dur = timeout_secs
+        .map(std::time::Duration::from_secs)
+        .unwrap_or(std::time::Duration::from_secs(u64::MAX / 1_000_000_000));
+    let sleep = tokio::time::sleep(timeout_dur);
+    tokio::pin!(sleep);
+
+    loop {
+        tokio::select! {
+            _ = &mut sleep => {
+                eprintln!(
+                    "acomm --receive: no input after {} seconds.",
+                    timeout_secs.unwrap_or(0)
+                );
+                std::process::exit(1);
+            }
+            line_res = lines.next_line() => {
+                let line = match line_res? {
+                    Some(l) => l,
+                    None => return Err("Bridge disconnected.".into()),
+                };
+                if let Ok(event) = serde_json::from_str::<ProtocolEvent>(&line) {
+                    // バックログの再生を読み飛ばし、BridgeSyncDone 以降のみ処理する。
+                    if !sync_done {
+                        if matches!(event, ProtocolEvent::BridgeSyncDone {}) {
+                            sync_done = true;
+                        }
+                        continue;
+                    }
+                    if let ProtocolEvent::Prompt { text, channel, .. } = event {
+                        if channel_passes_filter(channel.as_deref(), discord, slack, ntfy) {
+                            println!("{}", text);
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// チャンネル文字列がフィルタ条件を満たすか判定する。
+/// フィルタ指定なし（全 false）の場合はすべてのチャンネルを受け入れる。
+fn channel_passes_filter(channel: Option<&str>, discord: bool, slack: bool, ntfy: bool) -> bool {
+    let any_filter = discord || slack || ntfy;
+    if !any_filter {
+        return true;
+    }
+    let ch = channel.unwrap_or("");
+    (discord && ch.starts_with("discord:"))
+        || (slack && ch.starts_with("slack:"))
+        || (ntfy && ch.starts_with("ntfy:"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn filter_accepts_any_when_no_flags_set() {
+        assert!(channel_passes_filter(None, false, false, false));
+        assert!(channel_passes_filter(Some("discord:123:456"), false, false, false));
+        assert!(channel_passes_filter(Some("slack:U1:C1"), false, false, false));
+        assert!(channel_passes_filter(Some("ntfy:msg1"), false, false, false));
+    }
+
+    #[test]
+    fn filter_discord_accepts_only_discord_prefix() {
+        assert!(channel_passes_filter(Some("discord:123:456"), true, false, false));
+        assert!(!channel_passes_filter(Some("slack:U1:C1"), true, false, false));
+        assert!(!channel_passes_filter(Some("ntfy:msg1"), true, false, false));
+        assert!(!channel_passes_filter(None, true, false, false));
+    }
+
+    #[test]
+    fn filter_slack_accepts_only_slack_prefix() {
+        assert!(channel_passes_filter(Some("slack:U1:C1"), false, true, false));
+        assert!(!channel_passes_filter(Some("discord:123:456"), false, true, false));
+        assert!(!channel_passes_filter(Some("ntfy:msg1"), false, true, false));
+    }
+
+    #[test]
+    fn filter_ntfy_accepts_only_ntfy_prefix() {
+        assert!(channel_passes_filter(Some("ntfy:msg1"), false, false, true));
+        assert!(!channel_passes_filter(Some("discord:123:456"), false, false, true));
+        assert!(!channel_passes_filter(Some("slack:U1:C1"), false, false, true));
+    }
+
+    #[test]
+    fn filter_multiple_flags_accepts_any_matching() {
+        // discord + slack
+        assert!(channel_passes_filter(Some("discord:123:456"), true, true, false));
+        assert!(channel_passes_filter(Some("slack:U1:C1"), true, true, false));
+        assert!(!channel_passes_filter(Some("ntfy:msg1"), true, true, false));
+    }
 }
 
 async fn start_subscribe() -> Result<(), Box<dyn Error>> {

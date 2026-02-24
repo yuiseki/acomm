@@ -265,38 +265,42 @@ pub fn transform_slack_message(text: &str, user_id: &str, slack_channel: &str) -
 mod tests {
     use super::*;
 
+    // env var を書き換えるテストは並列実行すると競合するため 1 関数にまとめて順序実行する。
     #[tokio::test]
-    async fn test_notify_slack_fails_without_bot_token() {
+    async fn test_notify_slack_env_var_validation() {
         let token_backup = std::env::var("SLACK_BOT_TOKEN").ok();
         let channel_backup = std::env::var("SLACK_NOTIFY_CHANNEL_ID").ok();
+
+        // Case 1: SLACK_BOT_TOKEN が未設定
         unsafe {
             std::env::remove_var("SLACK_BOT_TOKEN");
             std::env::remove_var("SLACK_NOTIFY_CHANNEL_ID");
         }
         let result = notify_slack("test").await;
         assert!(result.is_err(), "should fail when SLACK_BOT_TOKEN is missing");
-        let msg = format!("{}", result.unwrap_err());
-        assert!(msg.contains("SLACK_BOT_TOKEN"), "error should mention missing var");
-        unsafe {
-            if let Some(v) = token_backup { std::env::set_var("SLACK_BOT_TOKEN", v); }
-            if let Some(v) = channel_backup { std::env::set_var("SLACK_NOTIFY_CHANNEL_ID", v); }
-        }
-    }
+        assert!(
+            format!("{}", result.unwrap_err()).contains("SLACK_BOT_TOKEN"),
+            "error should mention SLACK_BOT_TOKEN"
+        );
 
-    #[tokio::test]
-    async fn test_notify_slack_fails_without_channel_env() {
-        let token_backup = std::env::var("SLACK_BOT_TOKEN").ok();
-        let channel_backup = std::env::var("SLACK_NOTIFY_CHANNEL_ID").ok();
+        // Case 2: SLACK_BOT_TOKEN は設定済み、SLACK_NOTIFY_CHANNEL_ID が未設定
         unsafe {
             std::env::set_var("SLACK_BOT_TOKEN", "dummy-token");
             std::env::remove_var("SLACK_NOTIFY_CHANNEL_ID");
         }
         let result = notify_slack("test").await;
         assert!(result.is_err(), "should fail when SLACK_NOTIFY_CHANNEL_ID is missing");
-        let msg = format!("{}", result.unwrap_err());
-        assert!(msg.contains("SLACK_NOTIFY_CHANNEL_ID"), "error should mention missing var");
+        assert!(
+            format!("{}", result.unwrap_err()).contains("SLACK_NOTIFY_CHANNEL_ID"),
+            "error should mention SLACK_NOTIFY_CHANNEL_ID"
+        );
+
+        // 復元
         unsafe {
-            if let Some(v) = token_backup { std::env::set_var("SLACK_BOT_TOKEN", v); } else { std::env::remove_var("SLACK_BOT_TOKEN"); }
+            match token_backup {
+                Some(v) => std::env::set_var("SLACK_BOT_TOKEN", v),
+                None => std::env::remove_var("SLACK_BOT_TOKEN"),
+            }
             if let Some(v) = channel_backup { std::env::set_var("SLACK_NOTIFY_CHANNEL_ID", v); }
         }
     }

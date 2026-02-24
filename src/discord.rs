@@ -499,41 +499,42 @@ mod tests {
         }
     }
 
+    // env var を書き換えるテストは並列実行すると競合するため 1 関数にまとめて順序実行する。
     #[tokio::test]
-    async fn test_notify_discord_fails_without_token_env() {
-        // Temporarily remove DISCORD_BOT_TOKEN and DISCORD_NOTIFY_CHANNEL_ID
+    async fn test_notify_discord_env_var_validation() {
         let token_backup = std::env::var("DISCORD_BOT_TOKEN").ok();
         let channel_backup = std::env::var("DISCORD_NOTIFY_CHANNEL_ID").ok();
+
+        // Case 1: DISCORD_BOT_TOKEN が未設定
         unsafe {
             std::env::remove_var("DISCORD_BOT_TOKEN");
             std::env::remove_var("DISCORD_NOTIFY_CHANNEL_ID");
         }
         let result = notify_discord("test").await;
         assert!(result.is_err(), "should fail when DISCORD_BOT_TOKEN is missing");
-        let msg = format!("{}", result.unwrap_err());
-        assert!(msg.contains("DISCORD_BOT_TOKEN"), "error should mention missing var");
-        // Restore
-        unsafe {
-            if let Some(v) = token_backup { std::env::set_var("DISCORD_BOT_TOKEN", v); }
-            if let Some(v) = channel_backup { std::env::set_var("DISCORD_NOTIFY_CHANNEL_ID", v); }
-        }
-    }
+        assert!(
+            format!("{}", result.unwrap_err()).contains("DISCORD_BOT_TOKEN"),
+            "error should mention DISCORD_BOT_TOKEN"
+        );
 
-    #[tokio::test]
-    async fn test_notify_discord_fails_without_channel_env() {
-        let token_backup = std::env::var("DISCORD_BOT_TOKEN").ok();
-        let channel_backup = std::env::var("DISCORD_NOTIFY_CHANNEL_ID").ok();
+        // Case 2: DISCORD_BOT_TOKEN は設定済み、DISCORD_NOTIFY_CHANNEL_ID が未設定
         unsafe {
             std::env::set_var("DISCORD_BOT_TOKEN", "dummy-token");
             std::env::remove_var("DISCORD_NOTIFY_CHANNEL_ID");
         }
         let result = notify_discord("test").await;
         assert!(result.is_err(), "should fail when DISCORD_NOTIFY_CHANNEL_ID is missing");
-        let msg = format!("{}", result.unwrap_err());
-        assert!(msg.contains("DISCORD_NOTIFY_CHANNEL_ID"), "error should mention missing var");
-        // Restore
+        assert!(
+            format!("{}", result.unwrap_err()).contains("DISCORD_NOTIFY_CHANNEL_ID"),
+            "error should mention DISCORD_NOTIFY_CHANNEL_ID"
+        );
+
+        // 復元
         unsafe {
-            if let Some(v) = token_backup { std::env::set_var("DISCORD_BOT_TOKEN", v); } else { std::env::remove_var("DISCORD_BOT_TOKEN"); }
+            match token_backup {
+                Some(v) => std::env::set_var("DISCORD_BOT_TOKEN", v),
+                None => std::env::remove_var("DISCORD_BOT_TOKEN"),
+            }
             if let Some(v) = channel_backup { std::env::set_var("DISCORD_NOTIFY_CHANNEL_ID", v); }
         }
     }
