@@ -23,7 +23,7 @@ which correctly exposes `key.shift` in the input handler.
 
 | File | Status |
 |------|--------|
-| `tui/src/protocol.ts` | ✅ Done — ProtocolEvent types, AgentTool, helpers |
+| `tui/src/protocol.ts` | ✅ Done — ProtocolEvent types, AgentProvider, helpers |
 | `tui/src/bridge.ts` | ✅ Done — ensureBridge, connectBridge, Bridge interface |
 | `tui/src/textHelpers.ts` | ✅ Done — pure text helpers (insertAt, deleteCharBefore, offsetToRowCol, rowColToOffset) |
 | `tui/src/MultilineInput.tsx` | ✅ Done — imports textHelpers; Shift+Enter newline, cursor, history keys |

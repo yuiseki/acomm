@@ -24,7 +24,7 @@ import { homedir } from 'node:os';
 
 export interface SessionTurn {
   timestamp: string; // ISO 8601 — when AgentDone fired
-  tool: string;      // AgentTool variant name, e.g. "Gemini"
+  tool: string;      // AgentProvider variant name, e.g. "Gemini"
   model: string;     // Active model name, e.g. "gemini-2.5-flash"
   prompt: string;    // User's prompt text
   response: string;  // Full agent response (accumulated chunks)

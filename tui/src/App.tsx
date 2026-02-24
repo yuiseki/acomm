@@ -16,7 +16,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Bridge } from './bridge.js';
-import type { AgentTool, ProtocolEvent } from './protocol.js';
+import type { AgentProvider, ProtocolEvent } from './protocol.js';
 import { toolCommandName, AGENT_TOOLS, PROVIDER_MODELS, normalizeTool, getModelsForTool } from './protocol.js';
 import MultilineInput from './MultilineInput.js';
 import SelectionMenu from './SelectionMenu.js';
@@ -73,7 +73,7 @@ const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', 
 interface AppProps {
   bridge: Bridge;
   channel: string;
-  initialTool?: AgentTool;
+  initialTool?: AgentProvider;
   subscribe: (cb: (e: ProtocolEvent) => void) => void;
   unsubscribe: (cb: (e: ProtocolEvent) => void) => void;
 }
@@ -131,7 +131,7 @@ export default function App({ bridge, channel, initialTool = 'Gemini', subscribe
 
   // --- tool / processing state ---
   const normalizedInitialTool = normalizeTool(initialTool);
-  const [activeTool, setActiveTool] = useState<AgentTool>(normalizedInitialTool);
+  const [activeTool, setActiveTool] = useState<AgentProvider>(normalizedInitialTool);
   const [activeModel, setActiveModel] = useState<string>(getModelsForTool(normalizedInitialTool)[0] ?? '');
   const [isProcessing, setIsProcessing] = useState(false);
 

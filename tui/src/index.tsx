@@ -12,7 +12,7 @@ import React from 'react';
 import { render } from 'ink';
 import { parseArgs } from 'node:util';
 import { ensureBridge, connectBridge } from './bridge.js';
-import type { ProtocolEvent, AgentTool } from './protocol.js';
+import type { ProtocolEvent, AgentProvider } from './protocol.js';
 import { normalizeTool } from './protocol.js';
 import App from './App.js';
 

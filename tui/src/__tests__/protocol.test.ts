@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { eventKind, toolCommandName, AGENT_TOOLS, PROVIDER_MODELS } from '../protocol.js';
-import type { ProtocolEvent, AgentTool } from '../protocol.js';
+import type { ProtocolEvent, AgentProvider } from '../protocol.js';
 
 describe('eventKind', () => {
   it('returns "Prompt" for a Prompt event', () => {
@@ -62,7 +62,7 @@ describe('PROVIDER_MODELS', () => {
 
   it('each entry is a non-empty array of strings', () => {
     for (const tool of AGENT_TOOLS) {
-      const models = PROVIDER_MODELS[tool as AgentTool];
+      const models = PROVIDER_MODELS[tool as AgentProvider];
       expect(Array.isArray(models)).toBe(true);
       expect(models.length).toBeGreaterThan(0);
       for (const m of models) {

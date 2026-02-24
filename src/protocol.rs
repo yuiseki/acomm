@@ -1,11 +1,11 @@
-use acore::AgentTool;
+use acore::AgentProvider;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum ProtocolEvent {
     Prompt { 
         text: String, 
-        tool: Option<AgentTool>,
+        tool: Option<AgentProvider>,
         channel: Option<String>,
     },
     /// エージェントからの回答の断片（チャンク）。
@@ -25,7 +25,7 @@ pub enum ProtocolEvent {
         channel: Option<String>,
     },
     SyncContext { context: String },
-    ToolSwitched { tool: AgentTool },
+    ToolSwitched { tool: AgentProvider },
     ModelSwitched { model: String },
 }
 

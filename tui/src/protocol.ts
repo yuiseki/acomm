@@ -9,12 +9,12 @@
  *   {"ToolSwitched":{"tool":"Gemini"}}
  */
 
-export type AgentTool = 'Gemini' | 'Claude' | 'Codex' | 'OpenCode' | 'Mock';
+export type AgentProvider = 'Gemini' | 'Claude' | 'Codex' | 'OpenCode' | 'Mock';
 
-export const AGENT_TOOLS: AgentTool[] = ['Gemini', 'Claude', 'Codex', 'OpenCode'];
+export const AGENT_TOOLS: AgentProvider[] = ['Gemini', 'Claude', 'Codex', 'OpenCode'];
 
 /** Available models for each provider. */
-export const PROVIDER_MODELS: Record<AgentTool, string[]> = {
+export const PROVIDER_MODELS: Record<AgentProvider, string[]> = {
   Gemini:   ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash'],
   Claude:   ['claude-opus-4-6', 'claude-sonnet-4-6', 'claude-haiku-4-5'],
   Codex:    ['gpt-4o', 'gpt-4o-mini', 'o1-mini'],
@@ -23,13 +23,13 @@ export const PROVIDER_MODELS: Record<AgentTool, string[]> = {
 };
 
 export type ProtocolEvent =
-  | { Prompt: { text: string; tool: AgentTool | null; channel: string | null } }
+  | { Prompt: { text: string; tool: AgentProvider | null; channel: string | null } }
   | { AgentChunk: { chunk: string; channel: string | null } }
   | { AgentDone: { channel: string | null } }
   | { SystemMessage: { msg: string; channel: string | null } }
   | { StatusUpdate: { is_processing: boolean; channel: string | null } }
   | { SyncContext: { context: string } }
-  | { ToolSwitched: { tool: AgentTool } }
+  | { ToolSwitched: { tool: AgentProvider } }
   | { ModelSwitched: { model: string } };
 
 /** Returns the variant name of a ProtocolEvent. */
@@ -37,13 +37,13 @@ export function eventKind(event: ProtocolEvent): string {
   return Object.keys(event)[0]!;
 }
 
-/** Converts an AgentTool to its CLI command name (lowercase). */
-export function toolCommandName(tool: AgentTool): string {
+/** Converts an AgentProvider to its CLI command name (lowercase). */
+export function toolCommandName(tool: AgentProvider): string {
   return tool.toLowerCase();
 }
 
-/** Case-insensitively finds the valid AgentTool for a given string. */
-export function normalizeTool(name: string | null | undefined): AgentTool {
+/** Case-insensitively finds the valid AgentProvider for a given string. */
+export function normalizeTool(name: string | null | undefined): AgentProvider {
   if (!name) return 'Gemini';
   const target = name.toLowerCase();
   for (const tool of AGENT_TOOLS) {
@@ -54,7 +54,7 @@ export function normalizeTool(name: string | null | undefined): AgentTool {
 }
 
 /** Safely gets the model list for a tool, falling back to Gemini if the tool is invalid. */
-export function getModelsForTool(tool: AgentTool | string | null | undefined): string[] {
+export function getModelsForTool(tool: AgentProvider | string | null | undefined): string[] {
   const normalized = normalizeTool(tool as any);
   return PROVIDER_MODELS[normalized] ?? PROVIDER_MODELS['Gemini'];
 }

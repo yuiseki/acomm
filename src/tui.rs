@@ -1,5 +1,5 @@
 use crate::protocol::ProtocolEvent;
-use acore::AgentTool;
+use acore::AgentProvider;
 use crossterm::event::{self, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::{
     backend::Backend,
@@ -191,7 +191,7 @@ pub struct App {
     pub input: InputState,
     pub input_mode: InputMode,
     pub messages: Vec<String>,
-    pub active_cli: AgentTool,
+    pub active_cli: AgentProvider,
     pub is_processing: bool,
     pub scroll: u16,
     pub auto_scroll: bool,
@@ -488,7 +488,7 @@ mod tests {
             input: InputState::new(),
             input_mode: InputMode::Normal,
             messages: Vec::new(),
-            active_cli: AgentTool::Gemini,
+            active_cli: AgentProvider::Gemini,
             is_processing: false,
             scroll: 0,
             auto_scroll: true,
