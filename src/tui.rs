@@ -256,7 +256,6 @@ impl App {
                 if let Some(last) = self.messages.last_mut() {
                     if !last.ends_with('\n') { last.push('\n'); }
                 }
-                self.messages.push("--- (Done) ---\n".into());
                 if self.auto_scroll { self.scroll_to_bottom(); }
             }
             ProtocolEvent::ModelSwitched { model } => {

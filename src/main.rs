@@ -126,7 +126,6 @@ fn display_event(event: &ProtocolEvent, active_tool_name: &mut String, is_start_
         }
         ProtocolEvent::AgentDone { .. } => {
             if !*is_start_of_line { println!(); }
-            println!("--- (Done) ---");
             *is_start_of_line = true;
         }
         ProtocolEvent::ProviderSwitched { provider } => {

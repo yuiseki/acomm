@@ -229,7 +229,6 @@ export default function App({ bridge, channel, initialProvider = 'Gemini', subsc
         }
         currentTurnRef.current = null;
       }
-      push('\n' + chalk.dim('--- (Done) ---') + '\n');
     } else if ('SystemMessage' in event) {
       push(chalk.yellow(`[System] ${event.SystemMessage.msg}`) + '\n');
     } else if ('StatusUpdate' in event) {
