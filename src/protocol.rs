@@ -25,7 +25,7 @@ pub enum ProtocolEvent {
         channel: Option<String>,
     },
     SyncContext { context: String },
-    ToolSwitched { tool: AgentProvider },
+    ProviderSwitched { tool: AgentProvider },
     ModelSwitched { model: String },
 }
 
@@ -38,7 +38,7 @@ impl ProtocolEvent {
             ProtocolEvent::SystemMessage { channel, .. } => channel.clone(),
             ProtocolEvent::StatusUpdate { channel, .. } => channel.clone(),
             ProtocolEvent::SyncContext { .. }
-            | ProtocolEvent::ToolSwitched { .. }
+            | ProtocolEvent::ProviderSwitched { .. }
             | ProtocolEvent::ModelSwitched { .. } => None,
         }
     }

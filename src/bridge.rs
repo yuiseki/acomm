@@ -1,5 +1,5 @@
 use crate::protocol::ProtocolEvent;
-use acore::{AgentExecutor, AgentTool, SessionManager};
+use acore::{AgentExecutor, AgentProvider, SessionManager};
 use std::{collections::VecDeque, error::Error, path::Path, sync::Arc};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
@@ -9,7 +9,7 @@ const SOCKET_PATH: &str = "/tmp/acomm.sock";
 const MAX_BACKLOG: usize = 100;
 
 pub struct BridgeState {
-    pub active_tool: AgentTool,
+    pub active_provider: AgentProvider,
     pub active_model: Option<String>,
     pub backlog: VecDeque<ProtocolEvent>,
     pub session_manager: SessionManager,
@@ -25,7 +25,7 @@ pub async fn start_bridge() -> Result<(), Box<dyn Error>> {
     let tx = Arc::new(tx);
     
     let state = Arc::new(Mutex::new(BridgeState {
-        active_tool: AgentTool::Gemini,
+        active_provider: AgentProvider::Gemini,
         active_model: None,
         backlog: VecDeque::new(),
         session_manager: SessionManager::new(),
@@ -41,7 +41,7 @@ pub async fn start_bridge() -> Result<(), Box<dyn Error>> {
                 | ProtocolEvent::AgentChunk { .. }
                 | ProtocolEvent::AgentDone { .. }
                 | ProtocolEvent::SystemMessage { .. }
-                | ProtocolEvent::ToolSwitched { .. }
+                | ProtocolEvent::ProviderSwitched { .. }
                 | ProtocolEvent::ModelSwitched { .. }
             ) {
                 s.backlog.push_back(event.clone());
@@ -49,8 +49,8 @@ pub async fn start_bridge() -> Result<(), Box<dyn Error>> {
                     s.backlog.pop_front();
                 }
             }
-            if let ProtocolEvent::ToolSwitched { ref tool } = event {
-                s.active_tool = tool.clone();
+            if let ProtocolEvent::ProviderSwitched { ref tool } = event {
+                s.active_provider = tool.clone();
                 // Reset model selection when tool changes
                 s.active_model = None;
             }
@@ -95,7 +95,7 @@ async fn handle_bridge_connection(
             initial_payload.push_str(&serde_json::to_string(&event)?);
             initial_payload.push('\n');
         }
-        let tool_event = ProtocolEvent::ToolSwitched { tool: s.active_tool.clone() };
+        let tool_event = ProtocolEvent::ProviderSwitched { tool: s.active_provider.clone() };
         initial_payload.push_str(&serde_json::to_string(&tool_event)?);
         initial_payload.push('\n');
         if let Some(ref model) = s.active_model {
@@ -125,13 +125,13 @@ async fn handle_bridge_connection(
                                 handle_command(text, &tx_loop, &state).await?;
                             } else {
                                 let channel = event.clone_channel();
-                                let active_tool = match tool {
+                                let active_provider = match tool {
                                     Some(t) => t.clone(),
-                                    None => state.lock().await.active_tool.clone(),
+                                    None => state.lock().await.active_provider.clone(),
                                 };
                                 let _ = tx_loop.send(ProtocolEvent::Prompt { 
                                     text: text.clone(), 
-                                    tool: Some(active_tool.clone()), 
+                                    tool: Some(active_provider.clone()), 
                                     channel: channel.clone()
                                 });
                                 let _ = tx_loop.send(ProtocolEvent::StatusUpdate { is_processing: true, channel: channel.clone() });
@@ -146,7 +146,7 @@ async fn handle_bridge_connection(
                                     let tx_chunk = Arc::clone(&tx_inner);
                                     let tx_err = Arc::clone(&tx_inner);
                                     let ch_chunk = channel_inner.clone();
-                                    match manager.execute_with_resume(active_tool, &text_inner, move |chunk| {
+                                    match manager.execute_with_resume(active_provider, &text_inner, move |chunk| {
                                         let _ = tx_chunk.send(ProtocolEvent::AgentChunk { chunk, channel: ch_chunk.clone() });
                                     }).await {
                                         Ok(_) => {},
@@ -209,14 +209,14 @@ async fn handle_command(
         "tool" => {
             if let Some(name) = parts.get(1) {
                 let tool = match *name {
-                    "gemini" => AgentTool::Gemini,
-                    "claude" => AgentTool::Claude,
-                    "codex" => AgentTool::Codex,
-                    "opencode" => AgentTool::OpenCode,
-                    "mock" => AgentTool::Mock,
+                    "gemini" => AgentProvider::Gemini,
+                    "claude" => AgentProvider::Claude,
+                    "codex" => AgentProvider::Codex,
+                    "opencode" => AgentProvider::OpenCode,
+                    "mock" => AgentProvider::Mock,
                     _ => return Ok(()),
                 };
-                let _ = tx.send(ProtocolEvent::ToolSwitched { tool });
+                let _ = tx.send(ProtocolEvent::ProviderSwitched { tool });
             }
         }
         "model" => {
@@ -260,7 +260,7 @@ mod tests {
 
         let prompt = ProtocolEvent::Prompt { 
             text: "hello mock".into(), 
-            tool: Some(AgentTool::Mock), 
+            tool: Some(AgentProvider::Mock), 
             channel: Some("test_channel".into()) 
         };
         writer.write_all(format!("{}\n", serde_json::to_string(&prompt).unwrap()).as_bytes()).await.unwrap();

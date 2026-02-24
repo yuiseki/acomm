@@ -244,7 +244,7 @@ impl App {
             ProtocolEvent::StatusUpdate { is_processing, .. } => { 
                 self.is_processing = is_processing; 
             }
-            ProtocolEvent::ToolSwitched { tool } => { 
+            ProtocolEvent::ProviderSwitched { tool } => { 
                 self.active_cli = tool; 
             }
             ProtocolEvent::SystemMessage { msg, .. } => { 

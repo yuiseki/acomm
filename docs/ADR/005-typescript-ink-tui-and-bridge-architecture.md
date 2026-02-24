@@ -57,7 +57,7 @@ Key event types:
 | `AgentChunk` | bridge → clients | Streaming response fragment |
 | `AgentDone` | bridge → clients | Response complete |
 | `StatusUpdate` | bridge → clients | Processing flag for spinner |
-| `ToolSwitched` | bridge → clients | Active LLM tool changed |
+| `ProviderSwitched` | bridge → clients | Active LLM tool changed |
 | `SyncContext` | bridge → clients | `amem today` snapshot injected |
 | `SystemMessage` | bridge → clients | Bridge-level status notice |
 

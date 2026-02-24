@@ -6,12 +6,12 @@
  *   {"Prompt":{"text":"hello","tool":null,"channel":"tui"}}
  *   {"AgentChunk":{"chunk":"...","channel":null}}
  *   {"AgentDone":{"channel":null}}
- *   {"ToolSwitched":{"tool":"Gemini"}}
+ *   {"ProviderSwitched":{"tool":"Gemini"}}
  */
 
 export type AgentProvider = 'Gemini' | 'Claude' | 'Codex' | 'OpenCode' | 'Mock';
 
-export const AGENT_TOOLS: AgentProvider[] = ['Gemini', 'Claude', 'Codex', 'OpenCode'];
+export const AGENT_PROVIDERS: AgentProvider[] = ['Gemini', 'Claude', 'Codex', 'OpenCode'];
 
 /** Available models for each provider. */
 export const PROVIDER_MODELS: Record<AgentProvider, string[]> = {
@@ -23,13 +23,13 @@ export const PROVIDER_MODELS: Record<AgentProvider, string[]> = {
 };
 
 export type ProtocolEvent =
-  | { Prompt: { text: string; tool: AgentProvider | null; channel: string | null } }
+  | { Prompt: { text: string; provider: AgentProvider | null; channel: string | null } }
   | { AgentChunk: { chunk: string; channel: string | null } }
   | { AgentDone: { channel: string | null } }
   | { SystemMessage: { msg: string; channel: string | null } }
   | { StatusUpdate: { is_processing: boolean; channel: string | null } }
   | { SyncContext: { context: string } }
-  | { ToolSwitched: { tool: AgentProvider } }
+  | { ProviderSwitched: { provider: AgentProvider } }
   | { ModelSwitched: { model: string } };
 
 /** Returns the variant name of a ProtocolEvent. */
@@ -38,15 +38,15 @@ export function eventKind(event: ProtocolEvent): string {
 }
 
 /** Converts an AgentProvider to its CLI command name (lowercase). */
-export function toolCommandName(tool: AgentProvider): string {
-  return tool.toLowerCase();
+export function providerCommandName(provider: AgentProvider): string {
+  return provider.toLowerCase();
 }
 
 /** Case-insensitively finds the valid AgentProvider for a given string. */
-export function normalizeTool(name: string | null | undefined): AgentProvider {
+export function normalizeProvider(name: string | null | undefined): AgentProvider {
   if (!name) return 'Gemini';
   const target = name.toLowerCase();
-  for (const tool of AGENT_TOOLS) {
+  for (const tool of AGENT_PROVIDERS) {
     if (tool.toLowerCase() === target) return tool;
   }
   if ('mock'.toLowerCase() === target) return 'Mock';
@@ -54,7 +54,7 @@ export function normalizeTool(name: string | null | undefined): AgentProvider {
 }
 
 /** Safely gets the model list for a tool, falling back to Gemini if the tool is invalid. */
-export function getModelsForTool(tool: AgentProvider | string | null | undefined): string[] {
-  const normalized = normalizeTool(tool as any);
+export function getModelsForProvider(tool: AgentProvider | string | null | undefined): string[] {
+  const normalized = normalizeProvider(tool as any);
   return PROVIDER_MODELS[normalized] ?? PROVIDER_MODELS['Gemini'];
 }

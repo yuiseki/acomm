@@ -132,7 +132,7 @@ Commands sent as `Prompt` events starting with `/` are interpreted by the bridge
 
 | Command | Bridge action |
 |---|---|
-| `/tool <name>` | Broadcast `ToolSwitched` event |
+| `/tool <name>` | Broadcast `ProviderSwitched` event |
 | `/model <name>` | Broadcast `ModelSwitched` event |
 | `/clear` | Clear backlog, reset `SessionManager`, reset active model |
 | `/search <query>` | Run `amem search <query>`, broadcast `SystemMessage` with results |
@@ -150,12 +150,12 @@ Events exchanged over the Unix socket, one JSON object per line:
 | `SystemMessage` | Bridge → Client | `msg`, `channel` |
 | `StatusUpdate` | Bridge → Client | `is_processing`, `channel` |
 | `SyncContext` | Bridge → Client | `context` (amem snapshot on connect) |
-| `ToolSwitched` | Bridge → Client | `tool` |
+| `ProviderSwitched` | Bridge → Client | `tool` |
 | `ModelSwitched` | Bridge → Client | `model` |
 
 On connect, the bridge sends:
 1. `SyncContext` (current amem snapshot)
-2. `ToolSwitched` (restore active tool)
+2. `ProviderSwitched` (restore active tool)
 3. `ModelSwitched` (restore active model, if set)
 4. Backlog replay (last 100 events)
 

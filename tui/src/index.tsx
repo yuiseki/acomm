@@ -13,7 +13,7 @@ import { render } from 'ink';
 import { parseArgs } from 'node:util';
 import { ensureBridge, connectBridge } from './bridge.js';
 import type { ProtocolEvent, AgentProvider } from './protocol.js';
-import { normalizeTool } from './protocol.js';
+import { normalizeProvider } from './protocol.js';
 import App from './App.js';
 
 // ---------- CLI argument parsing ----------
@@ -28,7 +28,7 @@ const { values } = parseArgs({
 });
 
 const channel = values.channel as string;
-const initialTool = normalizeTool(values.tool as string);
+const initialTool = normalizeProvider(values.tool as string);
 
 // ---------- Bootstrap ----------
 
@@ -57,7 +57,7 @@ async function main(): Promise<void> {
     <App
       bridge={bridge}
       channel={channel}
-      initialTool={initialTool}
+      initialProvider={initialTool}
       subscribe={subscribe}
       unsubscribe={unsubscribe}
     />,

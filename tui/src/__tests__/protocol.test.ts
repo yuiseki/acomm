@@ -1,10 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { eventKind, toolCommandName, AGENT_TOOLS, PROVIDER_MODELS } from '../protocol.js';
+import { eventKind, providerCommandName, AGENT_PROVIDERS, PROVIDER_MODELS } from '../protocol.js';
 import type { ProtocolEvent, AgentProvider } from '../protocol.js';
 
 describe('eventKind', () => {
   it('returns "Prompt" for a Prompt event', () => {
-    const e: ProtocolEvent = { Prompt: { text: 'hello', tool: null, channel: null } };
+    const e: ProtocolEvent = { Prompt: { text: 'hello', provider: null, channel: null } };
     expect(eventKind(e)).toBe('Prompt');
   });
 
@@ -18,9 +18,9 @@ describe('eventKind', () => {
     expect(eventKind(e)).toBe('AgentDone');
   });
 
-  it('returns "ToolSwitched" for a ToolSwitched event', () => {
-    const e: ProtocolEvent = { ToolSwitched: { tool: 'Claude' } };
-    expect(eventKind(e)).toBe('ToolSwitched');
+  it('returns "ProviderSwitched" for a ProviderSwitched event', () => {
+    const e: ProtocolEvent = { ProviderSwitched: { provider: 'Claude' } };
+    expect(eventKind(e)).toBe('ProviderSwitched');
   });
 
   it('returns "SystemMessage" for a SystemMessage event', () => {
@@ -40,28 +40,28 @@ describe('eventKind', () => {
 });
 
 describe('toolCommandName', () => {
-  it('lowercases Gemini', () => expect(toolCommandName('Gemini')).toBe('gemini'));
-  it('lowercases Claude', () => expect(toolCommandName('Claude')).toBe('claude'));
-  it('lowercases Codex', () => expect(toolCommandName('Codex')).toBe('codex'));
-  it('lowercases OpenCode', () => expect(toolCommandName('OpenCode')).toBe('opencode'));
-  it('lowercases Mock', () => expect(toolCommandName('Mock')).toBe('mock'));
+  it('lowercases Gemini', () => expect(providerCommandName('Gemini')).toBe('gemini'));
+  it('lowercases Claude', () => expect(providerCommandName('Claude')).toBe('claude'));
+  it('lowercases Codex', () => expect(providerCommandName('Codex')).toBe('codex'));
+  it('lowercases OpenCode', () => expect(providerCommandName('OpenCode')).toBe('opencode'));
+  it('lowercases Mock', () => expect(providerCommandName('Mock')).toBe('mock'));
 });
 
 describe('AGENT_TOOLS', () => {
-  it('contains exactly 4 tools', () => expect(AGENT_TOOLS).toHaveLength(4));
-  it('does not include Mock (internal only)', () => expect(AGENT_TOOLS).not.toContain('Mock'));
-  it('starts with Gemini', () => expect(AGENT_TOOLS[0]).toBe('Gemini'));
+  it('contains exactly 4 tools', () => expect(AGENT_PROVIDERS).toHaveLength(4));
+  it('does not include Mock (internal only)', () => expect(AGENT_PROVIDERS).not.toContain('Mock'));
+  it('starts with Gemini', () => expect(AGENT_PROVIDERS[0]).toBe('Gemini'));
 });
 
 describe('PROVIDER_MODELS', () => {
   it('has an entry for every AGENT_TOOL', () => {
-    for (const tool of AGENT_TOOLS) {
+    for (const tool of AGENT_PROVIDERS) {
       expect(PROVIDER_MODELS).toHaveProperty(tool);
     }
   });
 
   it('each entry is a non-empty array of strings', () => {
-    for (const tool of AGENT_TOOLS) {
+    for (const tool of AGENT_PROVIDERS) {
       const models = PROVIDER_MODELS[tool as AgentProvider];
       expect(Array.isArray(models)).toBe(true);
       expect(models.length).toBeGreaterThan(0);

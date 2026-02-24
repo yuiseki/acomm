@@ -129,7 +129,7 @@ fn display_event(event: &ProtocolEvent, active_tool_name: &mut String, is_start_
             println!("--- (Done) ---");
             *is_start_of_line = true;
         }
-        ProtocolEvent::ToolSwitched { tool } => {
+        ProtocolEvent::ProviderSwitched { tool } => {
             *active_tool_name = tool.command_name().to_string();
             println!("\n[System]: Active tool switched to {}", active_tool_name);
             *is_start_of_line = true;

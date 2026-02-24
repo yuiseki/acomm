@@ -17,7 +17,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Bridge } from './bridge.js';
 import type { AgentProvider, ProtocolEvent } from './protocol.js';
-import { toolCommandName, AGENT_TOOLS, PROVIDER_MODELS, normalizeTool, getModelsForTool } from './protocol.js';
+import { providerCommandName, AGENT_PROVIDERS, normalizeProvider, getModelsForProvider } from './protocol.js';
 import MultilineInput from './MultilineInput.js';
 import SelectionMenu from './SelectionMenu.js';
 import SlashAutocomplete from './SlashAutocomplete.js';
@@ -73,12 +73,12 @@ const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', 
 interface AppProps {
   bridge: Bridge;
   channel: string;
-  initialTool?: AgentProvider;
+  initialProvider?: AgentProvider;
   subscribe: (cb: (e: ProtocolEvent) => void) => void;
   unsubscribe: (cb: (e: ProtocolEvent) => void) => void;
 }
 
-export default function App({ bridge, channel, initialTool = 'Gemini', subscribe, unsubscribe }: AppProps): React.JSX.Element {
+export default function App({ bridge, channel, initialProvider = 'Gemini', subscribe, unsubscribe }: AppProps): React.JSX.Element {
   const { exit } = useApp();
 
   // --- message list ---
@@ -130,9 +130,9 @@ export default function App({ bridge, channel, initialTool = 'Gemini', subscribe
   const savedInputRef = useRef(''); // save current input before history navigation
 
   // --- tool / processing state ---
-  const normalizedInitialTool = normalizeTool(initialTool);
-  const [activeTool, setActiveTool] = useState<AgentProvider>(normalizedInitialTool);
-  const [activeModel, setActiveModel] = useState<string>(getModelsForTool(normalizedInitialTool)[0] ?? '');
+  const normalizedInitialProvider = normalizeProvider(initialProvider);
+  const [activeProvider, setActiveProvider] = useState<AgentProvider>(normalizedInitialProvider);
+  const [activeModel, setActiveModel] = useState<string>(getModelsForProvider(normalizedInitialProvider)[0] ?? '');
   const [isProcessing, setIsProcessing] = useState(false);
 
   // --- menu mode state ---
@@ -186,14 +186,14 @@ export default function App({ bridge, channel, initialTool = 'Gemini', subscribe
   // the subscribe/unsubscribe effect below only fires when deps actually change.
   const handleEvent = useCallback((event: ProtocolEvent) => {
     if ('Prompt' in event) {
-      const { text, tool: eventTool } = event.Prompt;
+      const { text, provider } = event.Prompt;
       // Display ALL Prompt events (live echoes AND backlog replays).
       // handleSubmit no longer pushes locally; the bridge echo is the single source of truth.
       push(chalk.bold(`[you] `) + text + '\n');
       // Pre-push agent message placeholder: starts empty, chunks accumulate into `text`.
-      const displayTool = toolCommandName(eventTool ?? activeTool);
+      const displayProvider = providerCommandName(provider ?? activeProvider);
       push('', {
-        prefix: chalk.green(`[${displayTool}] `),
+        prefix: chalk.green(`[${displayProvider}] `),
         isAgent: true,
         isStreaming: true,
       });
@@ -221,7 +221,7 @@ export default function App({ bridge, channel, initialTool = 'Gemini', subscribe
         if (prompt && response.trim()) {
           saveSessionTurn({
             timestamp: new Date().toISOString(),
-            tool: activeTool,
+            tool: activeProvider,
             model: activeModel,
             prompt,
             response,
@@ -234,19 +234,19 @@ export default function App({ bridge, channel, initialTool = 'Gemini', subscribe
       push(chalk.yellow(`[System] ${event.SystemMessage.msg}`) + '\n');
     } else if ('StatusUpdate' in event) {
       setIsProcessing(event.StatusUpdate.is_processing);
-    } else if ('ToolSwitched' in event) {
-      const newTool = event.ToolSwitched.tool;
-      setActiveTool(newTool);
+    } else if ('ProviderSwitched' in event) {
+      const newProvider = event.ProviderSwitched.provider;
+      setActiveProvider(newProvider);
       // Reset model to the first available model for the new tool
-      setActiveModel(getModelsForTool(newTool)[0] ?? '');
-      push(chalk.cyan(`\n[Provider switched → ${newTool}]\n`));
+      setActiveModel(getModelsForProvider(newProvider)[0] ?? '');
+      push(chalk.cyan(`\n[Provider switched → ${newProvider}]\n`));
     } else if ('ModelSwitched' in event) {
       setActiveModel(event.ModelSwitched.model);
       push(chalk.cyan(`\n[Model switched → ${event.ModelSwitched.model}]\n`));
     } else if ('SyncContext' in event) {
       // Suppress — context is injected into the agent prompt, not shown to the user.
     }
-  }, [push, appendToLast, markLastComplete, activeTool, activeModel]);
+  }, [push, appendToLast, markLastComplete, activeProvider, activeModel]);
 
   // Register with the subscriber set provided by index.tsx.
   // The cleanup function automatically deregisters on unmount or when deps change.
@@ -288,7 +288,7 @@ export default function App({ bridge, channel, initialTool = 'Gemini', subscribe
         if (action.type === 'clear') {
           // Clear local messages and reset bridge session
           setMessages([]);
-          bridge.send({ Prompt: { text: '/clear', tool: null, channel: null } });
+          bridge.send({ Prompt: { text: '/clear', provider: null, channel: null } });
           return;
         }
         // bridge-forward: fall through to normal submission below (trimmed is action.text)
@@ -309,9 +309,9 @@ export default function App({ bridge, channel, initialTool = 'Gemini', subscribe
       setIsProcessing(true);
 
       // Send to bridge — the echo triggers handleEvent which shows [you] msg + agent prefix.
-      bridge.send({ Prompt: { text: trimmed, tool: activeTool, channel } });
+      bridge.send({ Prompt: { text: trimmed, provider: activeProvider, channel } });
     },
-    [history, isProcessing, channel, activeTool, bridge],
+    [history, isProcessing, channel, activeProvider, bridge],
   );
 
   // --- history navigation ---
@@ -358,20 +358,20 @@ export default function App({ bridge, channel, initialTool = 'Gemini', subscribe
       }
       if (key.downArrow) {
         const count =
-          menuMode === 'provider' ? AGENT_TOOLS.length :
+          menuMode === 'provider' ? AGENT_PROVIDERS.length :
           menuMode === 'session'  ? sessionTurns.length :
-          getModelsForTool(activeTool).length;
+          getModelsForProvider(activeProvider).length;
         setMenuSelectedIndex((i) => Math.min(Math.max(0, count - 1), i + 1));
         return;
       }
       if (key.return) {
         if (menuMode === 'provider') {
-          const tool = AGENT_TOOLS[menuSelectedIndex]!;
-          bridge.send({ Prompt: { text: `/tool ${toolCommandName(tool)}`, tool: null, channel: null } });
+          const provider = AGENT_PROVIDERS[menuSelectedIndex]!;
+          bridge.send({ Prompt: { text: `/tool ${providerCommandName(provider)}`, provider: null, channel: null } });
         } else if (menuMode === 'model') {
-          const model = getModelsForTool(activeTool)[menuSelectedIndex];
+          const model = getModelsForProvider(activeProvider)[menuSelectedIndex];
           if (model) {
-            bridge.send({ Prompt: { text: `/model ${model}`, tool: null, channel: null } });
+            bridge.send({ Prompt: { text: `/model ${model}`, provider: null, channel: null } });
           }
         }
         // session mode: Enter just closes (view-only for now)
@@ -403,15 +403,15 @@ export default function App({ bridge, channel, initialTool = 'Gemini', subscribe
   // --- render ---
   const modelLabel = activeModel ? `/${activeModel}` : '';
   const statusLine = chalk.cyan(
-    `[${toolCommandName(activeTool)}${modelLabel}]`,
+    `[${providerCommandName(activeProvider)}${modelLabel}]`,
   );
 
   // Menu items for current mode (only used for provider / model modes)
   const menuItems =
     menuMode === 'provider'
-      ? AGENT_TOOLS.map((t, i) => `${i + 1}. ${toolCommandName(t)}`)
+      ? AGENT_PROVIDERS.map((t, i) => `${i + 1}. ${providerCommandName(t)}`)
       : menuMode === 'model'
-      ? getModelsForTool(activeTool).map((m, i) => `${i + 1}. ${m}`)
+      ? getModelsForProvider(activeProvider).map((m, i) => `${i + 1}. ${m}`)
       : [];
 
   const menuTitle =
@@ -458,7 +458,7 @@ export default function App({ bridge, channel, initialTool = 'Gemini', subscribe
             value={inputValue}
             cursorOffset={cursorOffset}
             isProcessing={isProcessing}
-            activeTool={toolCommandName(activeTool)}
+            activeTool={providerCommandName(activeProvider)}
             isActive={menuMode === null}
             hasCompletions={slashCompletions.length > 0}
             onChangeCursor={setCursorOffset}
