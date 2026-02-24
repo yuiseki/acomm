@@ -239,7 +239,7 @@ export default function App({ bridge, channel, initialTool = 'Gemini', subscribe
       setActiveTool(newTool);
       // Reset model to the first available model for the new tool
       setActiveModel(getModelsForTool(newTool)[0] ?? '');
-      push(chalk.cyan(`\n[Tool switched → ${newTool}]\n`));
+      push(chalk.cyan(`\n[Provider switched → ${newTool}]\n`));
     } else if ('ModelSwitched' in event) {
       setActiveModel(event.ModelSwitched.model);
       push(chalk.cyan(`\n[Model switched → ${event.ModelSwitched.model}]\n`));
