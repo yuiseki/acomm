@@ -410,7 +410,7 @@ export default function App({ bridge, channel, initialTool = 'Gemini', subscribe
   // --- render ---
   const modelLabel = activeModel ? `/${activeModel}` : '';
   const statusLine = chalk.cyan(
-    `[${toolCommandName(activeTool)}${modelLabel}]  q=quit  1-4=switch tool  /provider  /model  /clear`,
+    `[${toolCommandName(activeTool)}${modelLabel}]`,
   );
 
   // Menu items for current mode (only used for provider / model modes)
@@ -426,11 +426,6 @@ export default function App({ bridge, channel, initialTool = 'Gemini', subscribe
 
   return (
     <Box flexDirection="column" height="100%">
-      {/* Status bar */}
-      <Box borderStyle="single" borderColor="gray">
-        <Text>{statusLine}</Text>
-      </Box>
-
       {/* Message history */}
       <Box flexDirection="column" flexGrow={1} overflowY="hidden">
         {messages.map((m, i) => {
@@ -482,6 +477,10 @@ export default function App({ bridge, channel, initialTool = 'Gemini', subscribe
           />
         </>
       )}
+      {/* Status bar */}
+      <Box borderStyle="single" borderColor="gray">
+        <Text>{statusLine}</Text>
+      </Box>
     </Box>
   );
 }
