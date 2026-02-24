@@ -398,13 +398,6 @@ export default function App({ bridge, channel, initialTool = 'Gemini', subscribe
       exit();
       return;
     }
-    // 1-4 — switch tool
-    const toolIdx = parseInt(input, 10) - 1;
-    if (toolIdx >= 0 && toolIdx < AGENT_TOOLS.length && !key.ctrl && !key.shift && inputValue === '') {
-      const tool = AGENT_TOOLS[toolIdx]!;
-      setActiveTool(tool);
-      bridge.send({ Prompt: { text: `/tool ${toolCommandName(tool)}`, tool: null, channel: null } });
-    }
   });
 
   // --- render ---
