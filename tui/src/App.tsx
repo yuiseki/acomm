@@ -478,7 +478,7 @@ export default function App({ bridge, channel, initialTool = 'Gemini', subscribe
         </>
       )}
       {/* Status bar */}
-      <Box borderStyle="single" borderColor="gray">
+      <Box height={1}>
         <Text>{statusLine}</Text>
       </Box>
     </Box>
