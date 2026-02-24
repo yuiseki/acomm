@@ -52,5 +52,5 @@ export function renderMarkdown(text: string): string {
   const result = marked(text);
   // marked() is synchronous when no async extensions are registered.
   // Cast to string to satisfy the TypeScript union type.
-  return result as string;
+  return (result as string).replace(/\n+$/, '');
 }

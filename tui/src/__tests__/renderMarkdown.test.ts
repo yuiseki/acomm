@@ -17,6 +17,11 @@ describe('renderMarkdown', () => {
     expect(result).toContain('hello world');
   });
 
+  it('does not append trailing newlines for plain text', () => {
+    const result = renderMarkdown('hello world');
+    expect(result.endsWith('\n')).toBe(false);
+  });
+
   it('renders bold text containing the original words', () => {
     const result = renderMarkdown('**bold text**');
     expect(result).toContain('bold text');
@@ -35,6 +40,11 @@ describe('renderMarkdown', () => {
   it('renders fenced code block containing the code', () => {
     const result = renderMarkdown('```js\nconsole.log("hello");\n```');
     expect(result).toContain('console.log');
+  });
+
+  it('does not leave trailing blank lines after fenced code blocks', () => {
+    const result = renderMarkdown('```js\nconsole.log("hello");\n```');
+    expect(result.endsWith('\n')).toBe(false);
   });
 
   it('renders h1 heading containing the heading text', () => {

@@ -195,7 +195,7 @@ export default function App({ bridge, channel, initialProvider = 'Gemini', subsc
       const { text, provider } = event.Prompt;
       // Display ALL Prompt events (live echoes AND backlog replays).
       // handleSubmit no longer pushes locally; the bridge echo is the single source of truth.
-      push(chalk.bold(`[you] `) + text + '\n');
+      push(chalk.bold(`[you] `) + text);
       // Pre-push agent message placeholder: starts empty, chunks accumulate into `text`.
       const displayProvider = providerCommandName(provider ?? activeProvider);
       push('', {
@@ -236,7 +236,7 @@ export default function App({ bridge, channel, initialProvider = 'Gemini', subsc
         currentTurnRef.current = null;
       }
     } else if ('SystemMessage' in event) {
-      push(chalk.yellow(`[System] ${event.SystemMessage.msg}`) + '\n');
+      push(chalk.yellow(`[System] ${event.SystemMessage.msg}`));
     } else if ('StatusUpdate' in event) {
       setIsProcessing(event.StatusUpdate.is_processing);
     } else if ('BridgeSyncDone' in event) {
@@ -258,11 +258,11 @@ export default function App({ bridge, channel, initialProvider = 'Gemini', subsc
       // Reset model to the first available model for the new provider
       setActiveModel(getModelsForProvider(newProvider)[0] ?? '');
       if (hasCompletedInitialSyncRef.current) {
-        push(chalk.cyan(`\n[Provider switched → ${newProvider}]\n`));
+        push(chalk.cyan(`[Provider switched → ${newProvider}]`));
       }
     } else if ('ModelSwitched' in event) {
       setActiveModel(event.ModelSwitched.model);
-      push(chalk.cyan(`\n[Model switched → ${event.ModelSwitched.model}]\n`));
+      push(chalk.cyan(`[Model switched → ${event.ModelSwitched.model}]`));
     } else if ('SyncContext' in event) {
       // Suppress — context is injected into the agent prompt, not shown to the user.
     }
