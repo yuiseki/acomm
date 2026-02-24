@@ -241,7 +241,7 @@ async fn send_slack_message(
 pub fn transform_slack_message(text: &str, user_id: &str, slack_channel: &str) -> ProtocolEvent {
     ProtocolEvent::Prompt {
         text: text.to_string(),
-        tool: None,
+        provider: None,
         channel: Some(format!("slack:{}:{}", user_id, slack_channel)),
     }
 }
@@ -255,10 +255,10 @@ mod tests {
     #[test]
     fn test_transform_slack_message() {
         let event = transform_slack_message("hello執事", "U12345", "C98765");
-        if let ProtocolEvent::Prompt { text, channel, tool } = event {
+        if let ProtocolEvent::Prompt { text, channel, provider } = event {
             assert_eq!(text, "hello執事");
             assert_eq!(channel, Some("slack:U12345:C98765".to_string()));
-            assert!(tool.is_none());
+            assert!(provider.is_none());
         } else {
             panic!("Transform failed to produce a Prompt event");
         }

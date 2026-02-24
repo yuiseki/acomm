@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 pub enum ProtocolEvent {
     Prompt { 
         text: String, 
-        tool: Option<AgentProvider>,
+        provider: Option<AgentProvider>,
         channel: Option<String>,
     },
     /// エージェントからの回答の断片（チャンク）。
@@ -25,7 +25,7 @@ pub enum ProtocolEvent {
         channel: Option<String>,
     },
     SyncContext { context: String },
-    ProviderSwitched { tool: AgentProvider },
+    ProviderSwitched { provider: AgentProvider },
     ModelSwitched { model: String },
 }
 
@@ -40,6 +40,44 @@ impl ProtocolEvent {
             ProtocolEvent::SyncContext { .. }
             | ProtocolEvent::ProviderSwitched { .. }
             | ProtocolEvent::ModelSwitched { .. } => None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ProtocolEvent;
+    use acore::AgentProvider;
+
+    #[test]
+    fn prompt_deserializes_provider_field() {
+        let json = r#"{"Prompt":{"text":"hello","provider":"Gemini","channel":"tui"}}"#;
+        let event: ProtocolEvent = serde_json::from_str(json).unwrap();
+        match event {
+            ProtocolEvent::Prompt { provider, .. } => {
+                assert_eq!(provider, Some(AgentProvider::Gemini));
+            }
+            _ => panic!("expected Prompt"),
+        }
+    }
+
+    #[test]
+    fn provider_switched_serializes_provider_field() {
+        let event = ProtocolEvent::ProviderSwitched { provider: AgentProvider::Claude };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains(r#""provider":"Claude""#));
+        assert!(!json.contains(r#""tool":"Claude""#));
+    }
+
+    #[test]
+    fn provider_switched_deserializes_provider_field() {
+        let json = r#"{"ProviderSwitched":{"provider":"Codex"}}"#;
+        let event: ProtocolEvent = serde_json::from_str(json).unwrap();
+        match event {
+            ProtocolEvent::ProviderSwitched { provider } => {
+                assert_eq!(provider, AgentProvider::Codex);
+            }
+            _ => panic!("expected ProviderSwitched"),
         }
     }
 }

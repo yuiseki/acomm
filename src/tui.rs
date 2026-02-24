@@ -244,8 +244,8 @@ impl App {
             ProtocolEvent::StatusUpdate { is_processing, .. } => { 
                 self.is_processing = is_processing; 
             }
-            ProtocolEvent::ProviderSwitched { tool } => { 
-                self.active_cli = tool; 
+            ProtocolEvent::ProviderSwitched { provider } => { 
+                self.active_cli = provider; 
             }
             ProtocolEvent::SystemMessage { msg, .. } => { 
                 self.messages.push(format!("[System]: {}\n", msg)); 
@@ -329,7 +329,7 @@ where <B as Backend>::Error: 'static {
                                     KeyCode::Char('3') => "codex",
                                     _ => "opencode",
                                 };
-                                let event = ProtocolEvent::Prompt { text: format!("/tool {tool_name}"), tool: None, channel: None };
+                                let event = ProtocolEvent::Prompt { text: format!("/tool {tool_name}"), provider: None, channel: None };
                                 if let Ok(j) = serde_json::to_string(&event) { let _ = writer.write_all(format!("{}\n", j).as_bytes()).await; }
                             }
                             KeyCode::Up | KeyCode::Char('k') => {
@@ -366,7 +366,7 @@ where <B as Backend>::Error: 'static {
                                         app.auto_scroll = true; // 自身の入力時は最下部へ
                                         app.scroll_to_bottom();
                                         
-                                        let event = ProtocolEvent::Prompt { text: msg, tool: None, channel: Some(app.channel.clone()) };
+                                        let event = ProtocolEvent::Prompt { text: msg, provider: None, channel: Some(app.channel.clone()) };
                                         if let Ok(j) = serde_json::to_string(&event) { let _ = writer.write_all(format!("{}\n", j).as_bytes()).await; }
                                     }
                                 }
@@ -496,7 +496,7 @@ mod tests {
             spinner_idx: 0,
         };
 
-        app.handle_bus_event(ProtocolEvent::Prompt { text: "test".into(), tool: None, channel: Some("tui".into()) });
+        app.handle_bus_event(ProtocolEvent::Prompt { text: "test".into(), provider: None, channel: Some("tui".into()) });
         app.handle_bus_event(ProtocolEvent::AgentChunk { chunk: "Line 1\n".into(), channel: Some("tui".into()) });
         app.handle_bus_event(ProtocolEvent::AgentChunk { chunk: "\n".into(), channel: Some("tui".into()) });
         app.handle_bus_event(ProtocolEvent::AgentChunk { chunk: "\n".into(), channel: Some("tui".into()) });

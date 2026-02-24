@@ -83,7 +83,7 @@ async fn ensure_bridge_connection(auto_start: bool) -> Result<UnixStream, Box<dy
 
 async fn publish_to_bridge(msg: &str, channel: Option<&str>) -> Result<(), Box<dyn Error>> {
     let mut stream = ensure_bridge_connection(false).await?;
-    let event = ProtocolEvent::Prompt { text: msg.to_string(), tool: None, channel: channel.map(|s| s.to_string()) };
+    let event = ProtocolEvent::Prompt { text: msg.to_string(), provider: None, channel: channel.map(|s| s.to_string()) };
     let j = serde_json::to_string(&event)?;
     stream.write_all(format!("{}\n", j).as_bytes()).await?;
     let _ = stream.shutdown().await;
@@ -129,8 +129,8 @@ fn display_event(event: &ProtocolEvent, active_tool_name: &mut String, is_start_
             println!("--- (Done) ---");
             *is_start_of_line = true;
         }
-        ProtocolEvent::ProviderSwitched { tool } => {
-            *active_tool_name = tool.command_name().to_string();
+        ProtocolEvent::ProviderSwitched { provider } => {
+            *active_tool_name = provider.command_name().to_string();
             println!("\n[System]: Active tool switched to {}", active_tool_name);
             *is_start_of_line = true;
         }

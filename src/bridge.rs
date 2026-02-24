@@ -49,8 +49,8 @@ pub async fn start_bridge() -> Result<(), Box<dyn Error>> {
                     s.backlog.pop_front();
                 }
             }
-            if let ProtocolEvent::ProviderSwitched { ref tool } = event {
-                s.active_provider = tool.clone();
+            if let ProtocolEvent::ProviderSwitched { ref provider } = event {
+                s.active_provider = provider.clone();
                 // Reset model selection when tool changes
                 s.active_model = None;
             }
@@ -95,8 +95,8 @@ async fn handle_bridge_connection(
             initial_payload.push_str(&serde_json::to_string(&event)?);
             initial_payload.push('\n');
         }
-        let tool_event = ProtocolEvent::ProviderSwitched { tool: s.active_provider.clone() };
-        initial_payload.push_str(&serde_json::to_string(&tool_event)?);
+        let provider_event = ProtocolEvent::ProviderSwitched { provider: s.active_provider.clone() };
+        initial_payload.push_str(&serde_json::to_string(&provider_event)?);
         initial_payload.push('\n');
         if let Some(ref model) = s.active_model {
             let model_event = ProtocolEvent::ModelSwitched { model: model.clone() };
@@ -120,18 +120,18 @@ async fn handle_bridge_connection(
                 };
                 if let Ok(event) = serde_json::from_str::<ProtocolEvent>(&line) {
                     match event {
-                        ProtocolEvent::Prompt { ref text, ref tool, .. } => {
+                        ProtocolEvent::Prompt { ref text, ref provider, .. } => {
                             if text.starts_with('/') {
                                 handle_command(text, &tx_loop, &state).await?;
                             } else {
                                 let channel = event.clone_channel();
-                                let active_provider = match tool {
+                                let active_provider = match provider {
                                     Some(t) => t.clone(),
                                     None => state.lock().await.active_provider.clone(),
                                 };
                                 let _ = tx_loop.send(ProtocolEvent::Prompt { 
                                     text: text.clone(), 
-                                    tool: Some(active_provider.clone()), 
+                                    provider: Some(active_provider.clone()), 
                                     channel: channel.clone()
                                 });
                                 let _ = tx_loop.send(ProtocolEvent::StatusUpdate { is_processing: true, channel: channel.clone() });
@@ -208,7 +208,7 @@ async fn handle_command(
         }
         "tool" => {
             if let Some(name) = parts.get(1) {
-                let tool = match *name {
+                let provider = match *name {
                     "gemini" => AgentProvider::Gemini,
                     "claude" => AgentProvider::Claude,
                     "codex" => AgentProvider::Codex,
@@ -216,7 +216,7 @@ async fn handle_command(
                     "mock" => AgentProvider::Mock,
                     _ => return Ok(()),
                 };
-                let _ = tx.send(ProtocolEvent::ProviderSwitched { tool });
+                let _ = tx.send(ProtocolEvent::ProviderSwitched { provider });
             }
         }
         "model" => {
@@ -260,7 +260,7 @@ mod tests {
 
         let prompt = ProtocolEvent::Prompt { 
             text: "hello mock".into(), 
-            tool: Some(AgentProvider::Mock), 
+            provider: Some(AgentProvider::Mock), 
             channel: Some("test_channel".into()) 
         };
         writer.write_all(format!("{}\n", serde_json::to_string(&prompt).unwrap()).as_bytes()).await.unwrap();

@@ -97,7 +97,7 @@ async fn send_to_ntfy(topic: &str, message: &str) -> Result<(), Box<dyn Error>> 
 pub fn transform_ntfy_message(text: &str, msg_id: &str) -> ProtocolEvent {
     ProtocolEvent::Prompt {
         text: text.to_string(),
-        tool: None,
+        provider: None,
         channel: Some(format!("ntfy:{}", msg_id)),
     }
 }

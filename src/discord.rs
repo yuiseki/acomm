@@ -287,7 +287,7 @@ pub fn transform_discord_message(
 ) -> ProtocolEvent {
     ProtocolEvent::Prompt {
         text: content.to_string(),
-        tool: None,
+        provider: None,
         channel: Some(format!("discord:{}:{}", channel_id, message_id)),
     }
 }
@@ -304,10 +304,10 @@ mod tests {
     #[test]
     fn test_transform_discord_message() {
         let event = transform_discord_message("Hello 執事！", "987654321", "111222333");
-        if let ProtocolEvent::Prompt { text, channel, tool } = event {
+        if let ProtocolEvent::Prompt { text, channel, provider } = event {
             assert_eq!(text, "Hello 執事！");
             assert_eq!(channel, Some("discord:987654321:111222333".to_string()));
-            assert!(tool.is_none());
+            assert!(provider.is_none());
         } else {
             panic!("Transform failed to produce a Prompt event");
         }
