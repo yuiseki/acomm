@@ -86,6 +86,18 @@ describe('PROVIDER_MODELS', () => {
     expect(PROVIDER_MODELS['Gemini'].length).toBeGreaterThanOrEqual(1);
   });
 
+  it('Gemini list matches current Gemini CLI names (no stale gemini-2.0-flash)', () => {
+    expect(PROVIDER_MODELS['Gemini']).toContain('gemini-2.5-pro');
+    expect(PROVIDER_MODELS['Gemini']).toContain('gemini-2.5-flash');
+    expect(PROVIDER_MODELS['Gemini']).toContain('gemini-2.5-flash-lite');
+    expect(PROVIDER_MODELS['Gemini']).toContain('auto-gemini-2.5');
+    expect(PROVIDER_MODELS['Gemini']).toContain('auto-gemini-3');
+    expect(PROVIDER_MODELS['Gemini']).toContain('gemini-3-pro-preview');
+    expect(PROVIDER_MODELS['Gemini']).toContain('gemini-3.1-pro-preview');
+    expect(PROVIDER_MODELS['Gemini']).toContain('gemini-3.1-pro-preview-customtools');
+    expect(PROVIDER_MODELS['Gemini']).not.toContain('gemini-2.0-flash');
+  });
+
   it('Claude has at least one model', () => {
     expect(PROVIDER_MODELS['Claude'].length).toBeGreaterThanOrEqual(1);
   });

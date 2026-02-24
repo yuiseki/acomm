@@ -15,7 +15,17 @@ export const AGENT_PROVIDERS: AgentProvider[] = ['Gemini', 'Claude', 'Codex', 'O
 
 /** Available models for each provider. */
 export const PROVIDER_MODELS: Record<AgentProvider, string[]> = {
-  Gemini:   ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash'],
+  Gemini:   [
+    'gemini-2.5-pro',
+    'gemini-2.5-flash',
+    'gemini-2.5-flash-lite',
+    'auto-gemini-2.5',
+    'auto-gemini-3',
+    'gemini-3-flash-preview',
+    'gemini-3-pro-preview',
+    'gemini-3.1-pro-preview',
+    'gemini-3.1-pro-preview-customtools',
+  ],
   Claude:   ['claude-opus-4-6', 'claude-sonnet-4-6', 'claude-haiku-4-5'],
   Codex:    ['gpt-4o', 'gpt-4o-mini', 'o1-mini'],
   OpenCode: ['default'],
