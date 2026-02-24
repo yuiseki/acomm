@@ -25,6 +25,7 @@ import SessionBrowser from './SessionBrowser.js';
 import { parseSlashCommand, getSlashCompletions } from './slashCommands.js';
 import { renderMarkdown } from './renderMarkdown.js';
 import { saveSessionTurn, loadRecentTurns, type SessionTurn } from './sessionStorage.js';
+import { buildInitialProviderSyncCommand } from './startupProviderSync.js';
 
 type MenuMode = null | 'provider' | 'model' | 'session';
 
@@ -136,6 +137,9 @@ export default function App({ bridge, channel, initialProvider = 'Gemini', subsc
   const [activeProvider, setActiveProvider] = useState<AgentProvider>(normalizedInitialProvider);
   const [activeModel, setActiveModel] = useState<string>(getModelsForProvider(normalizedInitialProvider)[0] ?? '');
   const [isProcessing, setIsProcessing] = useState(false);
+  const activeProviderRef = useRef<AgentProvider>(normalizedInitialProvider);
+  const hasCompletedInitialSyncRef = useRef(false);
+  const initialProviderSyncSentRef = useRef(false);
 
   // --- menu mode state ---
   const [menuMode, setMenuMode] = useState<MenuMode>(null);
@@ -235,19 +239,34 @@ export default function App({ bridge, channel, initialProvider = 'Gemini', subsc
       push(chalk.yellow(`[System] ${event.SystemMessage.msg}`) + '\n');
     } else if ('StatusUpdate' in event) {
       setIsProcessing(event.StatusUpdate.is_processing);
+    } else if ('BridgeSyncDone' in event) {
+      hasCompletedInitialSyncRef.current = true;
+      if (!initialProviderSyncSentRef.current) {
+        initialProviderSyncSentRef.current = true;
+        const syncCmd = buildInitialProviderSyncCommand(
+          normalizedInitialProvider,
+          activeProviderRef.current,
+        );
+        if (syncCmd) {
+          bridge.send({ Prompt: { text: syncCmd, provider: null, channel: null } });
+        }
+      }
     } else if ('ProviderSwitched' in event) {
       const newProvider = event.ProviderSwitched.provider;
+      activeProviderRef.current = newProvider;
       setActiveProvider(newProvider);
       // Reset model to the first available model for the new provider
       setActiveModel(getModelsForProvider(newProvider)[0] ?? '');
-      push(chalk.cyan(`\n[Provider switched → ${newProvider}]\n`));
+      if (hasCompletedInitialSyncRef.current) {
+        push(chalk.cyan(`\n[Provider switched → ${newProvider}]\n`));
+      }
     } else if ('ModelSwitched' in event) {
       setActiveModel(event.ModelSwitched.model);
       push(chalk.cyan(`\n[Model switched → ${event.ModelSwitched.model}]\n`));
     } else if ('SyncContext' in event) {
       // Suppress — context is injected into the agent prompt, not shown to the user.
     }
-  }, [push, appendToLast, markLastComplete, activeProvider, activeModel]);
+  }, [push, appendToLast, markLastComplete, activeProvider, activeModel, bridge, normalizedInitialProvider]);
 
   // Register with the subscriber set provided by index.tsx.
   // The cleanup function automatically deregisters on unmount or when deps change.
