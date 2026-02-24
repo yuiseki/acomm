@@ -42,8 +42,13 @@ const DEFAULT_DISCORD_MODEL_NAME: &str = "gemini-2.5-flash-lite";
 const OP_DISPATCH: u64 = 0;
 const OP_HEARTBEAT: u64 = 1;
 const OP_IDENTIFY: u64 = 2;
+const OP_PRESENCE_UPDATE: u64 = 3;
 const OP_HELLO: u64 = 10;
 const OP_HEARTBEAT_ACK: u64 = 11;
+
+const DISCORD_PRESENCE_ONLINE: &str = "online";
+const DISCORD_PRESENCE_DND: &str = "dnd";
+const DISCORD_PRESENCE_INVISIBLE: &str = "invisible";
 
 /// Gateway intents: GUILD_MESSAGES | DIRECT_MESSAGES
 ///
@@ -106,6 +111,26 @@ fn build_heartbeat_payload(sequence: Option<u64>) -> GatewayPayload {
     GatewayPayload {
         op: OP_HEARTBEAT,
         d: Some(sequence.map_or(Value::Null, |s| json!(s))),
+        s: None,
+        t: None,
+    }
+}
+
+fn build_presence_update_payload(status: &str) -> GatewayPayload {
+    let status = match status {
+        DISCORD_PRESENCE_ONLINE | "idle" | DISCORD_PRESENCE_DND | DISCORD_PRESENCE_INVISIBLE => {
+            status
+        }
+        _ => DISCORD_PRESENCE_ONLINE,
+    };
+    GatewayPayload {
+        op: OP_PRESENCE_UPDATE,
+        d: Some(json!({
+            "since": Value::Null,
+            "activities": [],
+            "status": status,
+            "afk": false,
+        })),
         s: None,
         t: None,
     }
@@ -279,6 +304,8 @@ pub async fn start_discord_adapter() -> Result<(), Box<dyn Error>> {
     let mut reply_buffers: HashMap<String, DiscordReplyBuffer> = HashMap::new();
     let mut typing_tasks: HashMap<String, tokio::task::JoinHandle<()>> = HashMap::new();
     let mut bridge_sync_done = false;
+    let mut discord_gateway_ready = false;
+    let mut discord_presence_status = DISCORD_PRESENCE_ONLINE.to_string();
 
     // Heartbeat ticker (fires after first HELLO)
     let mut heartbeat_ticker: Option<tokio::time::Interval> = None;
@@ -346,6 +373,13 @@ pub async fn start_discord_adapter() -> Result<(), Box<dyn Error>> {
                                         println!("Discord READY. Bot user id: {}", uid);
                                     }
                                 }
+                                let presence = build_presence_update_payload(DISCORD_PRESENCE_ONLINE);
+                                ws_sink
+                                    .send(Message::Text(serde_json::to_string(&presence)?.into()))
+                                    .await?;
+                                discord_gateway_ready = true;
+                                discord_presence_status = DISCORD_PRESENCE_ONLINE.to_string();
+                                println!("Discord presence set to {}.", DISCORD_PRESENCE_ONLINE);
                             }
                             Some("MESSAGE_CREATE") => {
                                 if let Some(d) = &payload.d {
@@ -402,7 +436,21 @@ pub async fn start_discord_adapter() -> Result<(), Box<dyn Error>> {
             line_res = bridge_lines.next_line() => {
                 let line = match line_res? {
                     Some(l) => l,
-                    None => break,
+                    None => {
+                        if discord_gateway_ready {
+                            let presence = build_presence_update_payload(DISCORD_PRESENCE_INVISIBLE);
+                            let _ = ws_sink
+                                .send(Message::Text(
+                                    serde_json::to_string(&presence)?.into(),
+                                ))
+                                .await;
+                            println!(
+                                "Discord presence set to {} before adapter shutdown.",
+                                DISCORD_PRESENCE_INVISIBLE
+                            );
+                        }
+                        break;
+                    }
                 };
                 if let Ok(event) = serde_json::from_str::<ProtocolEvent>(&line) {
                     if let ProtocolEvent::ProviderSwitched { ref provider } = event {
@@ -425,6 +473,9 @@ pub async fn start_discord_adapter() -> Result<(), Box<dyn Error>> {
                         ProtocolEvent::Prompt { provider, channel: Some(ref ch), .. }
                             if ch.starts_with("discord:") =>
                         {
+                            let should_switch_presence_to_dnd = reply_buffers.is_empty()
+                                && discord_gateway_ready
+                                && discord_presence_status != DISCORD_PRESENCE_DND;
                             let key = ch.to_string();
                             let provider_name = provider
                                 .as_ref()
@@ -458,6 +509,14 @@ pub async fn start_discord_adapter() -> Result<(), Box<dyn Error>> {
                                     old.abort();
                                 }
                             }
+                            if should_switch_presence_to_dnd {
+                                let presence = build_presence_update_payload(DISCORD_PRESENCE_DND);
+                                ws_sink
+                                    .send(Message::Text(serde_json::to_string(&presence)?.into()))
+                                    .await?;
+                                discord_presence_status = DISCORD_PRESENCE_DND.to_string();
+                                println!("Discord presence set to {}.", DISCORD_PRESENCE_DND);
+                            }
                         }
                         ProtocolEvent::AgentChunk { ref chunk, channel: Some(ref ch) }
                             if ch.starts_with("discord:") =>
@@ -486,6 +545,17 @@ pub async fn start_discord_adapter() -> Result<(), Box<dyn Error>> {
                                         send_discord_message(&token, discord_channel_id, &formatted).await?;
                                     }
                                 }
+                            }
+                            if discord_gateway_ready
+                                && reply_buffers.is_empty()
+                                && discord_presence_status != DISCORD_PRESENCE_ONLINE
+                            {
+                                let presence = build_presence_update_payload(DISCORD_PRESENCE_ONLINE);
+                                ws_sink
+                                    .send(Message::Text(serde_json::to_string(&presence)?.into()))
+                                    .await?;
+                                discord_presence_status = DISCORD_PRESENCE_ONLINE.to_string();
+                                println!("Discord presence set to {}.", DISCORD_PRESENCE_ONLINE);
                             }
                         }
                         ProtocolEvent::SystemMessage { msg, channel: Some(ref ch) }
@@ -719,6 +789,23 @@ mod tests {
         let json = serde_json::to_string(&payload).expect("heartbeat payload must serialize");
         assert!(json.contains(r#""op":1"#));
         assert!(json.contains(r#""d":null"#), "Discord heartbeat must include d:null before first sequence");
+    }
+
+    #[test]
+    fn test_presence_update_payload_uses_discord_gateway_schema() {
+        let payload = build_presence_update_payload("dnd");
+        assert_eq!(payload.op, OP_PRESENCE_UPDATE);
+        let d = payload.d.expect("presence update payload must include d");
+        assert_eq!(d.get("status").and_then(Value::as_str), Some("dnd"));
+        assert_eq!(d.get("afk").and_then(Value::as_bool), Some(false));
+        assert_eq!(d.get("since"), Some(&Value::Null));
+        assert_eq!(
+            d.get("activities")
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(0),
+            "presence activities should default to empty list"
+        );
     }
 
     fn sample_message(author_id: &str) -> DiscordMessage {

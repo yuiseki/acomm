@@ -90,6 +90,11 @@ acomm --subscribe   # Stream all events to stdout
   - `p-claude` → switch to `claude:claude-sonnet-4-6`
 - Discord replies sent after agent completion include a trailing status suffix such as:
   - `__gemini:gemini-2.5-flash-lite__`
+- Discord bot presence:
+  - `acomm --discord` starts as `online`
+  - switches to `dnd` while processing Discord prompts
+  - returns to `online` when processing completes
+  - appears offline when the adapter process is not running (Gateway disconnected)
 
 ## TUI (acomm-tui)
 
