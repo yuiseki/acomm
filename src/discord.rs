@@ -182,6 +182,7 @@ pub async fn start_discord_adapter() -> Result<(), Box<dyn Error>> {
     let mut sequence: Option<u64> = None;
     let mut bot_user_id: Option<String> = None;
     let mut reply_buffers: HashMap<String, String> = HashMap::new();
+    let mut typing_tasks: HashMap<String, tokio::task::JoinHandle<()>> = HashMap::new();
     let mut bridge_sync_done = false;
 
     // Heartbeat ticker (fires after first HELLO)
@@ -321,7 +322,21 @@ pub async fn start_discord_adapter() -> Result<(), Box<dyn Error>> {
                             if ch.starts_with("discord:") =>
                         {
                             let key = ch.to_string();
-                            reply_buffers.insert(key, String::new());
+                            reply_buffers.insert(key.clone(), String::new());
+                            // Start typing indicator while agent processes.
+                            let parts: Vec<&str> = ch.splitn(3, ':').collect();
+                            if let Some(discord_channel_id) = parts.get(1).map(|s| s.to_string()) {
+                                let token_clone = token.clone();
+                                let handle = tokio::spawn(async move {
+                                    loop {
+                                        let _ = trigger_discord_typing(&token_clone, &discord_channel_id).await;
+                                        tokio::time::sleep(std::time::Duration::from_secs(8)).await;
+                                    }
+                                });
+                                if let Some(old) = typing_tasks.insert(key, handle) {
+                                    old.abort();
+                                }
+                            }
                         }
                         ProtocolEvent::AgentChunk { ref chunk, channel: Some(ref ch) }
                             if ch.starts_with("discord:") =>
@@ -333,13 +348,18 @@ pub async fn start_discord_adapter() -> Result<(), Box<dyn Error>> {
                         ProtocolEvent::AgentDone { channel: Some(ref ch) }
                             if ch.starts_with("discord:") =>
                         {
+                            // Stop typing indicator.
+                            if let Some(handle) = typing_tasks.remove(ch.as_str()) {
+                                handle.abort();
+                            }
                             // channel format: "discord:<channel_id>:<message_id>"
                             let parts: Vec<&str> = ch.splitn(3, ':').collect();
                             let discord_channel_id = parts.get(1).unwrap_or(&"");
                             let key = ch.to_string();
                             if let Some(content) = reply_buffers.remove(&key) {
                                 if !content.is_empty() {
-                                    send_discord_message(&token, discord_channel_id, &content).await?;
+                                    let answer = extract_discord_answer(&content);
+                                    send_discord_message(&token, discord_channel_id, &answer).await?;
                                 }
                             }
                         }
@@ -376,6 +396,63 @@ async fn send_discord_message(
         .send()
         .await?;
     Ok(())
+}
+
+/// POST /channels/{channel_id}/typing to show the typing indicator in Discord.
+/// The indicator lasts ~10 seconds; this should be called every ~8 seconds while
+/// the agent is processing.
+async fn trigger_discord_typing(token: &str, channel_id: &str) -> Result<(), Box<dyn Error>> {
+    let client = reqwest::Client::new();
+    let url = format!("{}/channels/{}/typing", DISCORD_API_BASE, channel_id);
+    client
+        .post(&url)
+        .header("Authorization", format!("Bot {}", token))
+        .send()
+        .await?;
+    Ok(())
+}
+
+/// Extract the final answer from an agent's full output for Discord delivery.
+///
+/// Agent outputs include intermediate tool-call narration followed by the final
+/// answer. This function walks backwards through double-newline separators to find
+/// the last substantive paragraph (≥ 30 Unicode chars) that fits within Discord's
+/// 1900-char limit. Uses character counts (not byte lengths) so multi-byte Unicode
+/// is handled correctly. If no usable separator is found, the last 1899 chars are
+/// returned with a leading ellipsis.
+pub fn extract_discord_answer(content: &str) -> String {
+    const DISCORD_LIMIT: usize = 1900;
+    let trimmed = content.trim_end();
+
+    if trimmed.chars().count() <= DISCORD_LIMIT {
+        return trimmed.to_string();
+    }
+
+    // Walk backwards through double-newline separators to find the last
+    // substantive block (≥ 30 chars) that fits within the Discord limit.
+    let mut search = trimmed;
+    while let Some(pos) = search.rfind("\n\n") {
+        let candidate = search[pos + 2..].trim();
+        let char_count = candidate.chars().count();
+        if char_count >= 30 {
+            if char_count <= DISCORD_LIMIT {
+                return candidate.to_string();
+            }
+            // Candidate itself too long — take the last (DISCORD_LIMIT - 1) chars.
+            let chars: Vec<char> = candidate.chars().collect();
+            let start = chars.len().saturating_sub(DISCORD_LIMIT - 1);
+            let truncated: String = chars[start..].iter().collect();
+            return format!("…{}", truncated);
+        }
+        // Candidate too short — look for an earlier separator.
+        search = &search[..pos];
+    }
+
+    // No usable separator found — take the last (DISCORD_LIMIT - 1) chars.
+    let chars: Vec<char> = trimmed.chars().collect();
+    let start = chars.len().saturating_sub(DISCORD_LIMIT - 1);
+    let truncated: String = chars[start..].iter().collect();
+    format!("…{}", truncated)
 }
 
 /// Transform a Discord message event into a ProtocolEvent::Prompt for the bridge.
@@ -538,6 +615,63 @@ mod tests {
             if let Some(v) = channel_backup { std::env::set_var("DISCORD_NOTIFY_CHANNEL_ID", v); }
         }
     }
+
+    // ─── extract_discord_answer tests ──────────────────────────────────────────
+
+    #[test]
+    fn test_extract_discord_answer_short_content_unchanged() {
+        let short = "Hello, 天気は晴れです。";
+        assert_eq!(extract_discord_answer(short), short);
+    }
+
+    #[test]
+    fn test_extract_discord_answer_exactly_at_limit_unchanged() {
+        let content = "a".repeat(1900);
+        assert_eq!(extract_discord_answer(&content), content);
+    }
+
+    #[test]
+    fn test_extract_discord_answer_extracts_last_paragraph() {
+        // Simulate agent output: tool narration + final answer separated by \n\n.
+        // Padding must be large enough so total chars exceed 1900.
+        let thinking = "I will search for the information.\n\nLooking at the files...\n\n";
+        let answer = "本日の天気カレンダーを日本語に修正いたしました。修正内容は以下の通りです。";
+        let padding = "x".repeat(2000); // ensures total > 1900
+        let full = format!("{}{}\n\n{}", padding, thinking.trim(), answer);
+        assert!(full.chars().count() > 1900, "Precondition: full content must exceed 1900 chars");
+        let result = extract_discord_answer(&full);
+        assert_eq!(result, answer, "Should extract the last paragraph as the final answer");
+    }
+
+    #[test]
+    fn test_extract_discord_answer_skips_short_trailing_block() {
+        // If the last paragraph is too short (< 30 chars), look earlier.
+        let early_answer = "本日の天気カレンダーを日本語に修正いたしました。詳細は以下の通りです。正常に完了いたしました。";
+        let padding = "x".repeat(2000); // ensures total > 1900
+        // Last block is only "OK" (too short), penultimate block is the real answer.
+        let full = format!("{}\n\n{}\n\nOK", padding, early_answer);
+        assert!(full.chars().count() > 1900, "Precondition: full content must exceed 1900 chars");
+        let result = extract_discord_answer(&full);
+        assert_eq!(result, early_answer, "Should skip short trailing block and use earlier paragraph");
+    }
+
+    #[test]
+    fn test_extract_discord_answer_truncates_when_no_separator() {
+        // No double-newline — falls back to last 1899 chars with ellipsis prefix.
+        // Discord limits are character-based, so we check chars().count().
+        let content = "a".repeat(2000);
+        let result = extract_discord_answer(&content);
+        assert!(result.starts_with('…'), "Should start with ellipsis when truncated");
+        assert!(result.chars().count() <= 1900, "Result must fit within Discord 1900-char limit");
+    }
+
+    #[test]
+    fn test_extract_discord_answer_trims_trailing_whitespace() {
+        let content = format!("short answer\n\n\n   ");
+        assert_eq!(extract_discord_answer(&content), "short answer");
+    }
+
+    // ─── parse_allowed_discord_user_ids tests ──────────────────────────────────
 
     #[test]
     fn test_parse_allowed_discord_user_ids_trims_and_dedups() {
