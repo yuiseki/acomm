@@ -100,7 +100,7 @@ describe('connectBridge', () => {
 
   it('send() writes JSON + newline to the socket', () => {
     const bridge = connectBridge(vi.fn(), vi.fn());
-    const event = { Prompt: { text: 'hello', tool: null, channel: 'tui' } } as const;
+    const event = { Prompt: { text: 'hello', provider: null, channel: 'tui' } } as const;
 
     bridge.send(event as any);
 

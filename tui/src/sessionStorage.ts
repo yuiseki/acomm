@@ -24,7 +24,7 @@ import { homedir } from 'node:os';
 
 export interface SessionTurn {
   timestamp: string; // ISO 8601 — when AgentDone fired
-  tool: string;      // AgentProvider variant name, e.g. "Gemini"
+  provider: string;      // AgentProvider variant name, e.g. "Gemini"
   model: string;     // Active model name, e.g. "gemini-2.5-flash"
   prompt: string;    // User's prompt text
   response: string;  // Full agent response (accumulated chunks)
@@ -104,7 +104,7 @@ export function loadRecentTurns(
         if (!trimmed) continue;
         try {
           const parsed = JSON.parse(trimmed) as SessionTurn;
-          if (parsed.timestamp && parsed.tool && parsed.prompt !== undefined) {
+          if (parsed.timestamp && parsed.provider && parsed.prompt !== undefined) {
             turns.push(parsed);
           }
         } catch {

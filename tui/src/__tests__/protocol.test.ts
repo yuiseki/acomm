@@ -39,7 +39,7 @@ describe('eventKind', () => {
   });
 });
 
-describe('toolCommandName', () => {
+describe('providerCommandName', () => {
   it('lowercases Gemini', () => expect(providerCommandName('Gemini')).toBe('gemini'));
   it('lowercases Claude', () => expect(providerCommandName('Claude')).toBe('claude'));
   it('lowercases Codex', () => expect(providerCommandName('Codex')).toBe('codex'));
@@ -47,22 +47,22 @@ describe('toolCommandName', () => {
   it('lowercases Mock', () => expect(providerCommandName('Mock')).toBe('mock'));
 });
 
-describe('AGENT_TOOLS', () => {
-  it('contains exactly 4 tools', () => expect(AGENT_PROVIDERS).toHaveLength(4));
+describe('AGENT_PROVIDERS', () => {
+  it('contains exactly 4 providers', () => expect(AGENT_PROVIDERS).toHaveLength(4));
   it('does not include Mock (internal only)', () => expect(AGENT_PROVIDERS).not.toContain('Mock'));
   it('starts with Gemini', () => expect(AGENT_PROVIDERS[0]).toBe('Gemini'));
 });
 
 describe('PROVIDER_MODELS', () => {
-  it('has an entry for every AGENT_TOOL', () => {
-    for (const tool of AGENT_PROVIDERS) {
-      expect(PROVIDER_MODELS).toHaveProperty(tool);
+  it('has an entry for every AGENT_provider', () => {
+    for (const provider of AGENT_PROVIDERS) {
+      expect(PROVIDER_MODELS).toHaveProperty(provider);
     }
   });
 
   it('each entry is a non-empty array of strings', () => {
-    for (const tool of AGENT_PROVIDERS) {
-      const models = PROVIDER_MODELS[tool as AgentProvider];
+    for (const provider of AGENT_PROVIDERS) {
+      const models = PROVIDER_MODELS[provider as AgentProvider];
       expect(Array.isArray(models)).toBe(true);
       expect(models.length).toBeGreaterThan(0);
       for (const m of models) {

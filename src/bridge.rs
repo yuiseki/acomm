@@ -51,7 +51,7 @@ pub async fn start_bridge() -> Result<(), Box<dyn Error>> {
             }
             if let ProtocolEvent::ProviderSwitched { ref provider } = event {
                 s.active_provider = provider.clone();
-                // Reset model selection when tool changes
+                // Reset model selection when provider changes
                 s.active_model = None;
             }
             if let ProtocolEvent::ModelSwitched { ref model } = event {
@@ -206,7 +206,7 @@ async fn handle_command(
             let result = String::from_utf8_lossy(&output.stdout).to_string();
             let _ = tx.send(ProtocolEvent::SystemMessage { msg: format!("Today:\n{result}"), channel: Some("bridge".into()) });
         }
-        "tool" => {
+        "provider" => {
             if let Some(name) = parts.get(1) {
                 let provider = match *name {
                     "gemini" => AgentProvider::Gemini,

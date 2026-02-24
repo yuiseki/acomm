@@ -2,7 +2,7 @@
  * Entry point for acomm-tui.
  *
  * Usage:
- *   npx tsx src/index.tsx [--channel <name>] [--tool <gemini|claude|codex|opencode>]
+ *   npx tsx src/index.tsx [--channel <name>] [--provider <gemini|claude|codex|opencode>]
  *
  * Starts the acomm bridge if it is not already running, connects to the
  * Unix domain socket, then renders the Ink TUI.
@@ -21,14 +21,14 @@ import App from './App.js';
 const { values } = parseArgs({
   options: {
     channel: { type: 'string', short: 'c', default: 'tui' },
-    tool: { type: 'string', short: 't', default: 'Gemini' },
+    provider: { type: 'string', short: 't', default: 'Gemini' },
   },
   allowPositionals: false,
   strict: false,
 });
 
 const channel = values.channel as string;
-const initialTool = normalizeProvider(values.tool as string);
+const initialProvider = normalizeProvider(values.provider as string);
 
 // ---------- Bootstrap ----------
 
@@ -57,7 +57,7 @@ async function main(): Promise<void> {
     <App
       bridge={bridge}
       channel={channel}
-      initialProvider={initialTool}
+      initialProvider={initialProvider}
       subscribe={subscribe}
       unsubscribe={unsubscribe}
     />,

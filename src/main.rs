@@ -93,12 +93,12 @@ async fn publish_to_bridge(msg: &str, channel: Option<&str>) -> Result<(), Box<d
 async fn start_dump() -> Result<(), Box<dyn Error>> {
     let stream = ensure_bridge_connection(false).await?;
     let mut lines = BufReader::new(stream).lines();
-    let mut tool = "bot".to_string();
+    let mut provider = "bot".to_string();
     loop {
         match tokio::time::timeout(std::time::Duration::from_millis(100), lines.next_line()).await {
             Ok(Ok(Some(line))) => {
                 if let Ok(event) = serde_json::from_str::<ProtocolEvent>(&line) {
-                    display_event(&event, &mut tool, &mut true)?;
+                    display_event(&event, &mut provider, &mut true)?;
                 }
             }
             _ => break,
@@ -107,7 +107,7 @@ async fn start_dump() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn display_event(event: &ProtocolEvent, active_tool_name: &mut String, is_start_of_line: &mut bool) -> io::Result<()> {
+fn display_event(event: &ProtocolEvent, active_provider_name: &mut String, is_start_of_line: &mut bool) -> io::Result<()> {
     match event {
         ProtocolEvent::Prompt { text, channel, .. } => {
             println!("\n--- (Start) ---");
@@ -117,7 +117,7 @@ fn display_event(event: &ProtocolEvent, active_tool_name: &mut String, is_start_
         ProtocolEvent::AgentChunk { chunk, .. } => {
             for line in chunk.split_inclusive('\n') {
                 if *is_start_of_line {
-                    print!("[{}] ", active_tool_name);
+                    print!("[{}] ", active_provider_name);
                     *is_start_of_line = false;
                 }
                 print!("{line}");
@@ -129,8 +129,8 @@ fn display_event(event: &ProtocolEvent, active_tool_name: &mut String, is_start_
             *is_start_of_line = true;
         }
         ProtocolEvent::ProviderSwitched { provider } => {
-            *active_tool_name = provider.command_name().to_string();
-            println!("\n[System]: Active tool switched to {}", active_tool_name);
+            *active_provider_name = provider.command_name().to_string();
+            println!("\n[System]: Active provider switched to {}", active_provider_name);
             *is_start_of_line = true;
         }
         ProtocolEvent::SystemMessage { msg, channel } => {
@@ -146,7 +146,7 @@ fn display_event(event: &ProtocolEvent, active_tool_name: &mut String, is_start_
 async fn start_subscribe() -> Result<(), Box<dyn Error>> {
     let stream = ensure_bridge_connection(false).await?;
     let mut lines = BufReader::new(stream).lines();
-    let mut active_tool_name = "bot".to_string();
+    let mut active_provider_name = "bot".to_string();
     let mut is_thinking = false;
     let mut is_start_of_line = true;
     let spinner_chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -161,7 +161,7 @@ async fn start_subscribe() -> Result<(), Box<dyn Error>> {
                     else if matches!(event, ProtocolEvent::StatusUpdate { is_processing: false, .. } | ProtocolEvent::AgentChunk { .. } | ProtocolEvent::AgentDone { .. }) {
                         if is_thinking { print!("\r\x1B[K"); is_thinking = false; }
                     }
-                    display_event(&event, &mut active_tool_name, &mut is_start_of_line)?;
+                    display_event(&event, &mut active_provider_name, &mut is_start_of_line)?;
                 }
             }
             _ = tokio::time::sleep(std::time::Duration::from_millis(100)), if is_thinking => {

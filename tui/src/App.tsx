@@ -129,7 +129,7 @@ export default function App({ bridge, channel, initialProvider = 'Gemini', subsc
   const [historyIdx, setHistoryIdx] = useState<number | null>(null);
   const savedInputRef = useRef(''); // save current input before history navigation
 
-  // --- tool / processing state ---
+  // --- provider / processing state ---
   const normalizedInitialProvider = normalizeProvider(initialProvider);
   const [activeProvider, setActiveProvider] = useState<AgentProvider>(normalizedInitialProvider);
   const [activeModel, setActiveModel] = useState<string>(getModelsForProvider(normalizedInitialProvider)[0] ?? '');
@@ -221,7 +221,7 @@ export default function App({ bridge, channel, initialProvider = 'Gemini', subsc
         if (prompt && response.trim()) {
           saveSessionTurn({
             timestamp: new Date().toISOString(),
-            tool: activeProvider,
+            provider: activeProvider,
             model: activeModel,
             prompt,
             response,
@@ -236,7 +236,7 @@ export default function App({ bridge, channel, initialProvider = 'Gemini', subsc
     } else if ('ProviderSwitched' in event) {
       const newProvider = event.ProviderSwitched.provider;
       setActiveProvider(newProvider);
-      // Reset model to the first available model for the new tool
+      // Reset model to the first available model for the new provider
       setActiveModel(getModelsForProvider(newProvider)[0] ?? '');
       push(chalk.cyan(`\n[Provider switched → ${newProvider}]\n`));
     } else if ('ModelSwitched' in event) {
@@ -347,7 +347,7 @@ export default function App({ bridge, channel, initialProvider = 'Gemini', subsc
     }
   }, [history, historyIdx]);
 
-  // --- global keys (q to quit, 1-4 for tool switch; menu navigation when in menu mode) ---
+  // --- global keys (q to quit, menu navigation when in menu mode) ---
   useInput((input, key) => {
     // Menu mode: intercept all navigation and selection keys
     if (menuMode !== null) {

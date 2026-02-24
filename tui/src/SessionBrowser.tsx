@@ -41,7 +41,7 @@ function truncate(str: string, maxLen: number): string {
 
 export default function SessionBrowser({ turns, selectedIndex }: Props): React.JSX.Element {
   const termWidth = process.stdout.columns ?? 80;
-  // Reserve space for timestamp(12) + tool(10) + separators(4) + prompt preview
+  // Reserve space for timestamp(12) + provider(10) + separators(4) + prompt preview
   const promptWidth = Math.max(20, termWidth - 34);
 
   return (
@@ -57,17 +57,17 @@ export default function SessionBrowser({ turns, selectedIndex }: Props): React.J
         turns.map((turn, i) => {
           const isSelected = i === selectedIndex;
           const time = formatTimestamp(turn.timestamp);
-          const tool = truncate(`${turn.tool}`, 9).padEnd(9);
+          const provider = truncate(`${turn.provider}`, 9).padEnd(9);
           const prompt = truncate(turn.prompt.replace(/\n/g, ' '), promptWidth);
 
-          const line = `${time}  ${tool}  ${prompt}`;
+          const line = `${time}  ${provider}  ${prompt}`;
 
           return (
             <Box key={`${turn.timestamp}-${i}`} paddingLeft={1}>
               <Text>
                 {isSelected
                   ? chalk.bgCyan(chalk.black(line))
-                  : chalk.dim(time) + '  ' + chalk.green(tool) + '  ' + prompt}
+                  : chalk.dim(time) + '  ' + chalk.green(provider) + '  ' + prompt}
               </Text>
             </Box>
           );
