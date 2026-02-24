@@ -43,7 +43,7 @@ flowchart TD
 
 ### Components
 
-- **Bridge** (`src/bridge.rs`) — Central pub/sub hub on `/tmp/acomm.sock`. Receives `Prompt` events, dispatches them to `acore`, and broadcasts `AgentChunk`/`AgentDone` back to all subscribers. Handles slash commands (`/tool`, `/model`, `/clear`, `/search`, `/today`).
+- **Bridge** (`src/bridge.rs`) — Central pub/sub hub on `/tmp/acomm.sock`. Receives `Prompt` events, dispatches them to `acore`, and broadcasts `AgentChunk`/`AgentDone` back to all subscribers. Handles slash commands (`/provider`, `/model`, `/clear`, `/search`, `/today`).
 - **TypeScript TUI** (`tui/`) — Primary interactive interface built with [Ink](https://github.com/vadimdemedes/ink). Handles all user interaction including slash command menus.
 - **Rust TUI** (`src/tui.rs`) — Legacy interface (deprecated; kept for backwards compatibility).
 - **ntfy adapter** (`src/ntfy.rs`) — Bidirectional adapter for ntfy.sh push notifications.
@@ -107,7 +107,7 @@ Type these in the input field and press **Enter**:
 | `/provider` | Open interactive provider selection menu (↑/↓ + Enter to confirm) |
 | `/model` | Open model selection menu for the current provider |
 | `/clear` or `/reset` | Clear local message history and reset the bridge session |
-| `/tool <name>` | Switch provider directly (forwarded to bridge) |
+| `/provider <name>` | Switch provider directly (forwarded to bridge) |
 | `/search <query>` | Search amem memory (forwarded to bridge) |
 | `/today` | Show today's amem snapshot (forwarded to bridge) |
 
@@ -132,7 +132,7 @@ Commands sent as `Prompt` events starting with `/` are interpreted by the bridge
 
 | Command | Bridge action |
 |---|---|
-| `/tool <name>` | Broadcast `ProviderSwitched` event |
+| `/provider <name>` | Broadcast `ProviderSwitched` event |
 | `/model <name>` | Broadcast `ModelSwitched` event |
 | `/clear` | Clear backlog, reset `SessionManager`, reset active model |
 | `/search <query>` | Run `amem search <query>`, broadcast `SystemMessage` with results |

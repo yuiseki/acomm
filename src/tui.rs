@@ -328,7 +328,7 @@ where <B as Backend>::Error: 'static {
                                     KeyCode::Char('3') => "codex",
                                     _ => "opencode",
                                 };
-                                let event = ProtocolEvent::Prompt { text: format!("/tool {tool_name}"), provider: None, channel: None };
+                                let event = ProtocolEvent::Prompt { text: format!("/provider {tool_name}"), provider: None, channel: None };
                                 if let Ok(j) = serde_json::to_string(&event) { let _ = writer.write_all(format!("{}\n", j).as_bytes()).await; }
                             }
                             KeyCode::Up | KeyCode::Char('k') => {

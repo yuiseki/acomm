@@ -366,7 +366,7 @@ export default function App({ bridge, channel, initialProvider = 'Gemini', subsc
       if (key.return) {
         if (menuMode === 'provider') {
           const provider = AGENT_PROVIDERS[menuSelectedIndex]!;
-          bridge.send({ Prompt: { text: `/tool ${providerCommandName(provider)}`, provider: null, channel: null } });
+          bridge.send({ Prompt: { text: `/provider ${providerCommandName(provider)}`, provider: null, channel: null } });
         } else if (menuMode === 'model') {
           const model = getModelsForProvider(activeProvider)[menuSelectedIndex];
           if (model) {

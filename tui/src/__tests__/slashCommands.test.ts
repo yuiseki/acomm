@@ -42,7 +42,7 @@ describe('parseSlashCommand', () => {
   });
 
   it('returns bridge-forward for unknown slash commands', () => {
-    expect(parseSlashCommand('/tool gemini')).toEqual({ type: 'bridge-forward', text: '/tool gemini' });
+    expect(parseSlashCommand('/provider gemini')).toEqual({ type: 'bridge-forward', text: '/provider gemini' });
     expect(parseSlashCommand('/search hello')).toEqual({ type: 'bridge-forward', text: '/search hello' });
     expect(parseSlashCommand('/today')).toEqual({ type: 'bridge-forward', text: '/today' });
     expect(parseSlashCommand('/unknown')).toEqual({ type: 'bridge-forward', text: '/unknown' });
