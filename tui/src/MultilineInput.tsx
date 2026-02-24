@@ -233,18 +233,11 @@ export default function MultilineInput({
     });
   });
 
-  const hint = isProcessing
-    ? chalk.dim('  thinking...')
-    : hasCompletions
-    ? chalk.dim(`  [${activeTool}]  Tab=complete  Esc=dismiss  Enter=send`)
-    : chalk.dim(`  [${activeTool}]  Enter=send  Shift+Enter=newline  Ctrl+P/N=history`);
-
   return (
     <Box flexDirection="column" borderStyle="single" borderColor={isProcessing ? 'yellow' : 'cyan'}>
       <Box flexDirection="column" paddingLeft={1}>
         {visualRows}
       </Box>
-      <Text>{hint}</Text>
     </Box>
   );
 }
