@@ -8,7 +8,7 @@ use tokio::sync::{broadcast, Mutex};
 const SOCKET_PATH: &str = "/tmp/acomm.sock";
 const MAX_BACKLOG: usize = 100;
 const DEFAULT_PROVIDER: AgentProvider = AgentProvider::Gemini;
-const DEFAULT_GEMINI_MODEL: &str = "gemini-2.5-flash-lite";
+const DEFAULT_GEMINI_MODEL: &str = "auto-gemini-3";
 const DEFAULT_CLAUDE_MODEL: &str = "claude-sonnet-4-6";
 const DEFAULT_CODEX_MODEL: &str = "gpt-5.3-codex";
 
@@ -427,14 +427,14 @@ mod tests {
 
             match ev {
                 ProtocolEvent::ProviderSwitched { provider } if provider == AgentProvider::Gemini => saw_provider = true,
-                ProtocolEvent::ModelSwitched { model } if model == "gemini-2.5-flash-lite" => saw_model = true,
+                ProtocolEvent::ModelSwitched { model } if model == "auto-gemini-3" => saw_model = true,
                 ProtocolEvent::BridgeSyncDone {} => break,
                 _ => {}
             }
         }
 
         assert!(saw_provider, "initial sync should include Gemini default provider");
-        assert!(saw_model, "initial sync should include gemini-2.5-flash-lite default model");
+        assert!(saw_model, "initial sync should include auto-gemini-3 default model");
     }
 
     #[tokio::test]
@@ -460,7 +460,7 @@ mod tests {
         let tx = Arc::new(tx);
         let state = Mutex::new(BridgeState {
             active_provider: AgentProvider::Gemini,
-            active_model: Some("gemini-2.5-flash-lite".into()),
+            active_model: Some("auto-gemini-3".into()),
             backlog: VecDeque::new(),
             session_manager: SessionManager::new(),
         });
@@ -478,7 +478,7 @@ mod tests {
         let preset = discord_magic_provider_preset("p-gemini", Some("discord:1:2"))
             .expect("p-gemini should map to a preset");
         assert_eq!(preset.provider, AgentProvider::Gemini);
-        assert_eq!(preset.model, "gemini-2.5-flash-lite");
+        assert_eq!(preset.model, "auto-gemini-3");
     }
 
     #[test]

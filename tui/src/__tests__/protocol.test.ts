@@ -98,6 +98,10 @@ describe('PROVIDER_MODELS', () => {
     expect(PROVIDER_MODELS['Gemini']).not.toContain('gemini-2.0-flash');
   });
 
+  it('Gemini default model is Gemini 3 Auto (first entry)', () => {
+    expect(PROVIDER_MODELS['Gemini'][0]).toBe('auto-gemini-3');
+  });
+
   it('Claude has at least one model', () => {
     expect(PROVIDER_MODELS['Claude'].length).toBeGreaterThanOrEqual(1);
   });

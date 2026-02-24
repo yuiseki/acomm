@@ -36,7 +36,7 @@ const DISCORD_GATEWAY_URL: &str = "wss://gateway.discord.gg/?v=10&encoding=json"
 const DISCORD_API_BASE: &str = "https://discord.com/api/v10";
 const DISCORD_SAFE_MESSAGE_LIMIT: usize = 1900;
 const DEFAULT_DISCORD_PROVIDER_NAME: &str = "gemini";
-const DEFAULT_DISCORD_MODEL_NAME: &str = "gemini-2.5-flash-lite";
+const DEFAULT_DISCORD_MODEL_NAME: &str = "auto-gemini-3";
 
 /// Gateway opcodes
 const OP_DISPATCH: u64 = 0;
@@ -176,7 +176,7 @@ fn should_forward_discord_message(
 
 fn default_model_for_provider_name(provider_name: &str) -> Option<&'static str> {
     match provider_name {
-        "gemini" => Some("gemini-2.5-flash-lite"),
+        "gemini" => Some(DEFAULT_DISCORD_MODEL_NAME),
         "claude" => Some("claude-sonnet-4-6"),
         "codex" => Some("gpt-5.3-codex"),
         "dummy" => Some("echo"),
@@ -740,11 +740,11 @@ mod tests {
         let reply = format_discord_agent_reply_with_status(
             "pong",
             "gemini",
-            "gemini-2.5-flash-lite",
+            "auto-gemini-3",
         );
         assert!(reply.starts_with("pong"));
-        assert!(reply.ends_with("__gemini:gemini-2.5-flash-lite__"));
-        assert!(reply.contains("\n\n__gemini:gemini-2.5-flash-lite__"));
+        assert!(reply.ends_with("__gemini:auto-gemini-3__"));
+        assert!(reply.contains("\n\n__gemini:auto-gemini-3__"));
         assert!(reply.chars().count() <= 1900);
     }
 

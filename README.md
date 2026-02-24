@@ -83,13 +83,13 @@ acomm --subscribe   # Stream all events to stdout
   - When set, `acomm --discord` ignores messages from users not in the list.
 - Default agent session preset on bridge startup (useful for Discord):
   - Provider: `gemini`
-  - Model: `gemini-2.5-flash-lite`
+  - Model: `auto-gemini-3`
 - Discord-only magic words (to avoid `/` slash-command collisions):
-  - `p-gemini` → switch to `gemini:gemini-2.5-flash-lite`
+  - `p-gemini` → switch to `gemini:auto-gemini-3`
   - `p-codex` → switch to `codex:gpt-5.3-codex`
   - `p-claude` → switch to `claude:claude-sonnet-4-6`
 - Discord replies sent after agent completion include a trailing status suffix such as:
-  - `__gemini:gemini-2.5-flash-lite__`
+  - `__gemini:auto-gemini-3__`
 - Discord bot presence:
   - `acomm --discord` starts as `online`
   - switches to `dnd` while processing Discord prompts
