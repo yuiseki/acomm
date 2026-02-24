@@ -349,7 +349,7 @@ async fn start_tui(channel: Option<&str>) -> Result<(), Box<dyn Error>> {
     let (tx, rx) = mpsc::channel(100);
     let app = App {
         input: InputState::new(), input_mode: InputMode::Normal, messages: Vec::new(),
-        active_cli: AgentProvider::Gemini, is_processing: false, scroll: 0,
+        active_cli: AgentProvider::OpenCode, is_processing: false, scroll: 0,
         auto_scroll: true,
         channel: channel.unwrap_or("tui").to_string(), spinner_idx: 0,
     };

@@ -17,7 +17,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Bridge } from './bridge.js';
 import type { AgentProvider, ProtocolEvent } from './protocol.js';
-import { providerCommandName, AGENT_PROVIDERS, normalizeProvider, getModelsForProvider } from './protocol.js';
+import { providerCommandName, AGENT_PROVIDERS, DEFAULT_PROVIDER, normalizeProvider, getModelsForProvider } from './protocol.js';
 import MultilineInput from './MultilineInput.js';
 import SelectionMenu from './SelectionMenu.js';
 import SlashAutocomplete from './SlashAutocomplete.js';
@@ -79,7 +79,7 @@ interface AppProps {
   unsubscribe: (cb: (e: ProtocolEvent) => void) => void;
 }
 
-export default function App({ bridge, channel, initialProvider = 'Gemini', subscribe, unsubscribe }: AppProps): React.JSX.Element {
+export default function App({ bridge, channel, initialProvider = DEFAULT_PROVIDER, subscribe, unsubscribe }: AppProps): React.JSX.Element {
   const { exit } = useApp();
   const { stdout } = useStdout();
   const terminalWidth = Math.max(20, stdout.columns ?? process.stdout.columns ?? 80);

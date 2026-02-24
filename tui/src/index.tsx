@@ -13,7 +13,7 @@ import { render } from 'ink';
 import { parseArgs } from 'node:util';
 import { ensureBridge, connectBridge } from './bridge.js';
 import type { ProtocolEvent, AgentProvider } from './protocol.js';
-import { normalizeProvider } from './protocol.js';
+import { DEFAULT_PROVIDER, normalizeProvider } from './protocol.js';
 import App from './App.js';
 
 // ---------- CLI argument parsing ----------
@@ -21,7 +21,7 @@ import App from './App.js';
 const { values } = parseArgs({
   options: {
     channel: { type: 'string', short: 'c', default: 'tui' },
-    provider: { type: 'string', short: 't', default: 'Gemini' },
+    provider: { type: 'string', short: 't', default: DEFAULT_PROVIDER },
   },
   allowPositionals: false,
   strict: false,

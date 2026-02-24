@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { eventKind, providerCommandName, AGENT_PROVIDERS, PROVIDER_MODELS, normalizeProvider } from '../protocol.js';
+import { eventKind, providerCommandName, AGENT_PROVIDERS, PROVIDER_MODELS, normalizeProvider, getModelsForProvider } from '../protocol.js';
 import type { ProtocolEvent, AgentProvider } from '../protocol.js';
 
 describe('eventKind', () => {
@@ -52,10 +52,15 @@ describe('AGENT_PROVIDERS', () => {
   it('contains exactly 5 providers', () => expect(AGENT_PROVIDERS).toHaveLength(5));
   it('includes Dummy (user-facing echo provider)', () => expect(AGENT_PROVIDERS).toContain('Dummy'));
   it('does not include Mock (internal only)', () => expect(AGENT_PROVIDERS).not.toContain('Mock'));
-  it('starts with Gemini', () => expect(AGENT_PROVIDERS[0]).toBe('Gemini'));
+  it('starts with OpenCode', () => expect(AGENT_PROVIDERS[0]).toBe('OpenCode'));
 });
 
 describe('normalizeProvider', () => {
+  it('falls back to OpenCode when missing or invalid', () => {
+    expect(normalizeProvider(undefined)).toBe('OpenCode');
+    expect(normalizeProvider('unknown')).toBe('OpenCode');
+  });
+
   it('normalizes dummy aliases', () => {
     expect(normalizeProvider('dummy')).toBe('Dummy');
     expect(normalizeProvider('dummy-bot')).toBe('Dummy');
@@ -108,6 +113,11 @@ describe('PROVIDER_MODELS', () => {
 
   it('OpenCode has at least one model', () => {
     expect(PROVIDER_MODELS['OpenCode'].length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('OpenCode defaults to qwen3-coder:30b', () => {
+    expect(PROVIDER_MODELS['OpenCode'][0]).toBe('qwen3-coder:30b');
+    expect(getModelsForProvider('bogus')[0]).toBe('qwen3-coder:30b');
   });
 
   it('Dummy has at least one model', () => {

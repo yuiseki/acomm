@@ -11,7 +11,10 @@
 
 export type AgentProvider = 'Gemini' | 'Claude' | 'Codex' | 'OpenCode' | 'Dummy' | 'Mock';
 
-export const AGENT_PROVIDERS: AgentProvider[] = ['Gemini', 'Claude', 'Codex', 'OpenCode', 'Dummy'];
+export const DEFAULT_PROVIDER: AgentProvider = 'OpenCode';
+export const DEFAULT_OPENCODE_MODEL = 'qwen3-coder:30b';
+
+export const AGENT_PROVIDERS: AgentProvider[] = ['OpenCode', 'Gemini', 'Claude', 'Codex', 'Dummy'];
 
 /** Available models for each provider. */
 export const PROVIDER_MODELS: Record<AgentProvider, string[]> = {
@@ -28,7 +31,7 @@ export const PROVIDER_MODELS: Record<AgentProvider, string[]> = {
   ],
   Claude:   ['claude-opus-4-6', 'claude-sonnet-4-6', 'claude-haiku-4-5'],
   Codex:    ['gpt-4o', 'gpt-4o-mini', 'o1-mini'],
-  OpenCode: ['default'],
+  OpenCode: [DEFAULT_OPENCODE_MODEL, 'default'],
   Dummy:    ['echo'],
   Mock:     ['mock-model'],
 };
@@ -56,18 +59,18 @@ export function providerCommandName(provider: AgentProvider): string {
 
 /** Case-insensitively finds the valid AgentProvider for a given string. */
 export function normalizeProvider(name: string | null | undefined): AgentProvider {
-  if (!name) return 'Gemini';
+  if (!name) return DEFAULT_PROVIDER;
   const target = name.toLowerCase();
   for (const provider of AGENT_PROVIDERS) {
     if (provider.toLowerCase() === target) return provider;
   }
   if ('dummy-bot' === target || 'dummybot' === target) return 'Dummy';
   if ('mock'.toLowerCase() === target) return 'Mock';
-  return 'Gemini';
+  return DEFAULT_PROVIDER;
 }
 
-/** Safely gets the model list for a provider, falling back to Gemini if the provider is invalid. */
+/** Safely gets the model list for a provider, falling back to the default provider if invalid. */
 export function getModelsForProvider(provider: AgentProvider | string | null | undefined): string[] {
   const normalized = normalizeProvider(provider as any);
-  return PROVIDER_MODELS[normalized] ?? PROVIDER_MODELS['Gemini'];
+  return PROVIDER_MODELS[normalized] ?? PROVIDER_MODELS[DEFAULT_PROVIDER];
 }

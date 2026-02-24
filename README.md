@@ -130,7 +130,7 @@ Shows models available for the active provider:
 | Gemini | gemini-2.5-flash, gemini-2.5-pro, gemini-2.0-flash |
 | Claude | claude-opus-4-6, claude-sonnet-4-6, claude-haiku-4-5 |
 | Codex | gpt-4o, gpt-4o-mini, o1-mini |
-| OpenCode | default |
+| OpenCode | qwen3-coder:30b, default |
 
 ## Bridge Slash Commands
 

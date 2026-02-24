@@ -7,6 +7,15 @@ use tokio::sync::{broadcast, Mutex};
 
 const SOCKET_PATH: &str = "/tmp/acomm.sock";
 const MAX_BACKLOG: usize = 100;
+const DEFAULT_PROVIDER: AgentProvider = AgentProvider::OpenCode;
+const DEFAULT_OPENCODE_MODEL: &str = "qwen3-coder:30b";
+
+fn default_model_for_provider(provider: &AgentProvider) -> Option<&'static str> {
+    match provider {
+        AgentProvider::OpenCode => Some(DEFAULT_OPENCODE_MODEL),
+        _ => None,
+    }
+}
 
 pub struct BridgeState {
     pub active_provider: AgentProvider,
@@ -25,8 +34,8 @@ pub async fn start_bridge() -> Result<(), Box<dyn Error>> {
     let tx = Arc::new(tx);
     
     let state = Arc::new(Mutex::new(BridgeState {
-        active_provider: AgentProvider::Gemini,
-        active_model: None,
+        active_provider: DEFAULT_PROVIDER,
+        active_model: default_model_for_provider(&DEFAULT_PROVIDER).map(str::to_string),
         backlog: VecDeque::new(),
         session_manager: SessionManager::new(),
     }));
@@ -51,8 +60,8 @@ pub async fn start_bridge() -> Result<(), Box<dyn Error>> {
             }
             if let ProtocolEvent::ProviderSwitched { ref provider } = event {
                 s.active_provider = provider.clone();
-                // Reset model selection when provider changes
-                s.active_model = None;
+                // Reset model selection to the provider default (if one exists).
+                s.active_model = default_model_for_provider(provider).map(str::to_string);
             }
             if let ProtocolEvent::ModelSwitched { ref model } = event {
                 s.active_model = Some(model.clone());
@@ -232,7 +241,7 @@ async fn handle_command(
             let mut s = state.lock().await;
             s.backlog.clear();
             s.session_manager = SessionManager::new();
-            s.active_model = None;
+            s.active_model = default_model_for_provider(&s.active_provider).map(str::to_string);
             let _ = tx.send(ProtocolEvent::SystemMessage { msg: "Cleared.".into(), channel: Some("bridge".into()) });
         }
         _ => {}
@@ -313,6 +322,51 @@ mod tests {
         }
 
         assert!(saw_marker, "bridge should emit BridgeSyncDone after initial sync payload");
+    }
+
+    #[tokio::test]
+    async fn test_bridge_initial_sync_emits_default_provider_and_model() {
+        let _guard = BRIDGE_TEST_LOCK.lock().unwrap();
+        let _ = std::fs::remove_file(SOCKET_PATH);
+        tokio::spawn(async { let _ = start_bridge().await; });
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        let stream = UnixStream::connect(SOCKET_PATH).await.expect("Failed to connect");
+        let (reader, _) = tokio::io::split(stream);
+        let mut lines = BufReader::new(reader).lines();
+
+        let mut saw_provider = false;
+        let mut saw_model = false;
+        let start = std::time::Instant::now();
+        while start.elapsed() < Duration::from_secs(2) {
+            let line = match tokio::time::timeout(Duration::from_millis(200), lines.next_line()).await {
+                Ok(Ok(Some(line))) => line,
+                _ => break,
+            };
+
+            let ev: ProtocolEvent = match serde_json::from_str(&line) {
+                Ok(ev) => ev,
+                Err(_) => continue,
+            };
+
+            match ev {
+                ProtocolEvent::ProviderSwitched { provider } => {
+                    if provider == AgentProvider::OpenCode {
+                        saw_provider = true;
+                    }
+                }
+                ProtocolEvent::ModelSwitched { model } => {
+                    if model == "qwen3-coder:30b" {
+                        saw_model = true;
+                    }
+                }
+                ProtocolEvent::BridgeSyncDone {} => break,
+                _ => {}
+            }
+        }
+
+        assert!(saw_provider, "initial sync should include OpenCode as default provider");
+        assert!(saw_model, "initial sync should include qwen3-coder:30b as default model");
     }
 
     #[tokio::test]
