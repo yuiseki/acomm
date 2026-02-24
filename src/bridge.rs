@@ -107,6 +107,9 @@ async fn handle_bridge_connection(
             initial_payload.push_str(&serde_json::to_string(event)?);
             initial_payload.push('\n');
         }
+        let sync_done = ProtocolEvent::BridgeSyncDone {};
+        initial_payload.push_str(&serde_json::to_string(&sync_done)?);
+        initial_payload.push('\n');
         let _ = writer.write_all(initial_payload.as_bytes()).await;
     }
 
@@ -277,5 +280,31 @@ mod tests {
         assert!(received.iter().any(|e| matches!(e, ProtocolEvent::StatusUpdate { channel: Some(c), .. } if c == "test_channel")));
         assert!(received.iter().any(|e| matches!(e, ProtocolEvent::AgentChunk { channel: Some(c), .. } if c == "test_channel")));
         assert!(received.iter().any(|e| matches!(e, ProtocolEvent::AgentDone { channel: Some(c), .. } if c == "test_channel")));
+    }
+
+    #[tokio::test]
+    async fn test_bridge_initial_sync_emits_completion_marker() {
+        let _ = std::fs::remove_file(SOCKET_PATH);
+        tokio::spawn(async { let _ = start_bridge().await; });
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        let stream = UnixStream::connect(SOCKET_PATH).await.expect("Failed to connect");
+        let (reader, _) = tokio::io::split(stream);
+        let mut lines = BufReader::new(reader).lines();
+
+        let mut saw_marker = false;
+        let start = std::time::Instant::now();
+        while start.elapsed() < Duration::from_secs(2) {
+            if let Ok(Ok(Some(line))) = tokio::time::timeout(Duration::from_millis(200), lines.next_line()).await {
+                if line.contains("\"BridgeSyncDone\"") {
+                    saw_marker = true;
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+
+        assert!(saw_marker, "bridge should emit BridgeSyncDone after initial sync payload");
     }
 }

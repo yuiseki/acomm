@@ -258,6 +258,9 @@ impl App {
                 }
                 if self.auto_scroll { self.scroll_to_bottom(); }
             }
+            ProtocolEvent::BridgeSyncDone { .. } => {
+                // Internal bridge sync marker; no UI output.
+            }
             ProtocolEvent::ModelSwitched { model } => {
                 self.messages.push(format!("[Model switched → {}]\n", model));
                 if self.auto_scroll { self.scroll_to_bottom(); }

@@ -28,6 +28,7 @@ export type ProtocolEvent =
   | { AgentDone: { channel: string | null } }
   | { SystemMessage: { msg: string; channel: string | null } }
   | { StatusUpdate: { is_processing: boolean; channel: string | null } }
+  | { BridgeSyncDone: {} }
   | { SyncContext: { context: string } }
   | { ProviderSwitched: { provider: AgentProvider } }
   | { ModelSwitched: { model: string } };

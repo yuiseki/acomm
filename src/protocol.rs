@@ -24,6 +24,7 @@ pub enum ProtocolEvent {
         is_processing: bool,
         channel: Option<String>,
     },
+    BridgeSyncDone {},
     SyncContext { context: String },
     ProviderSwitched { provider: AgentProvider },
     ModelSwitched { model: String },
@@ -37,7 +38,8 @@ impl ProtocolEvent {
             ProtocolEvent::AgentDone { channel, .. } => channel.clone(),
             ProtocolEvent::SystemMessage { channel, .. } => channel.clone(),
             ProtocolEvent::StatusUpdate { channel, .. } => channel.clone(),
-            ProtocolEvent::SyncContext { .. }
+            ProtocolEvent::BridgeSyncDone { .. }
+            | ProtocolEvent::SyncContext { .. }
             | ProtocolEvent::ProviderSwitched { .. }
             | ProtocolEvent::ModelSwitched { .. } => None,
         }

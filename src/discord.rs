@@ -169,6 +169,7 @@ pub async fn start_discord_adapter() -> Result<(), Box<dyn Error>> {
     let mut sequence: Option<u64> = None;
     let mut bot_user_id: Option<String> = None;
     let mut reply_buffers: HashMap<String, String> = HashMap::new();
+    let mut bridge_sync_done = false;
 
     // Heartbeat ticker (fires after first HELLO)
     let mut heartbeat_ticker: Option<tokio::time::Interval> = None;
@@ -295,6 +296,13 @@ pub async fn start_discord_adapter() -> Result<(), Box<dyn Error>> {
                     None => break,
                 };
                 if let Ok(event) = serde_json::from_str::<ProtocolEvent>(&line) {
+                    if !bridge_sync_done {
+                        if matches!(event, ProtocolEvent::BridgeSyncDone { .. }) {
+                            bridge_sync_done = true;
+                            println!("Bridge initial sync complete (backlog ignored for Discord outbound replay safety).");
+                        }
+                        continue;
+                    }
                     match event {
                         ProtocolEvent::Prompt { channel: Some(ref ch), .. }
                             if ch.starts_with("discord:") =>
@@ -305,7 +313,9 @@ pub async fn start_discord_adapter() -> Result<(), Box<dyn Error>> {
                         ProtocolEvent::AgentChunk { ref chunk, channel: Some(ref ch) }
                             if ch.starts_with("discord:") =>
                         {
-                            reply_buffers.entry(ch.clone()).or_default().push_str(chunk);
+                            if let Some(buf) = reply_buffers.get_mut(ch) {
+                                buf.push_str(chunk);
+                            }
                         }
                         ProtocolEvent::AgentDone { channel: Some(ref ch) }
                             if ch.starts_with("discord:") =>
