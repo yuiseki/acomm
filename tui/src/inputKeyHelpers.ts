@@ -6,16 +6,6 @@ export interface InputKeyLike {
   ctrl?: boolean;
 }
 
-export interface NewlineDetectionOptions {
-  /**
-   * Treat a bare LF ("\n") with no ctrl modifier as newline insertion.
-   * Useful for terminals that map Shift+Enter -> LF (e.g. some Ghostty setups).
-   *
-   * Disabled by default because IME commit flows can also emit a bare LF.
-   */
-  allowBareLineFeedFallback?: boolean;
-}
-
 /**
  * Classify "insert newline" inputs for MultilineInput.
  *
@@ -26,13 +16,10 @@ export interface NewlineDetectionOptions {
 export function shouldInsertNewline(
   input: string,
   key: InputKeyLike,
-  options: NewlineDetectionOptions = {},
 ): boolean {
-  const allowBareLineFeedFallback = Boolean(options.allowBareLineFeedFallback);
   return (
-    (Boolean(key.return) && (Boolean(key.shift) || Boolean(key.meta) || Boolean(key.alt))) ||
-    (input === '\n' && !key.return && Boolean(key.ctrl)) ||
-    (allowBareLineFeedFallback && input === '\n' && !key.return && !key.ctrl)
+    (Boolean(key.return) && (Boolean(key.meta) || Boolean(key.alt))) ||
+    (input === '\n' && !key.return && Boolean(key.ctrl))
   );
 }
 

@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { normalizeInsertedInput, shouldInsertNewline } from '../inputKeyHelpers.js';
 
 describe('shouldInsertNewline', () => {
-  it('treats Shift+Enter as newline insertion', () => {
-    expect(shouldInsertNewline('', { return: true, shift: true })).toBe(true);
+  it('does not treat Shift+Enter as newline insertion (unsupported)', () => {
+    expect(shouldInsertNewline('', { return: true, shift: true })).toBe(false);
   });
 
   it('treats Alt+Enter as newline insertion', () => {
@@ -16,12 +16,6 @@ describe('shouldInsertNewline', () => {
 
   it('does not treat a bare LF without ctrl as newline insertion (IME-safe)', () => {
     expect(shouldInsertNewline('\n', { return: false, ctrl: false })).toBe(false);
-  });
-
-  it('can treat a bare LF as newline insertion when fallback is enabled', () => {
-    expect(
-      shouldInsertNewline('\n', { return: false, ctrl: false }, { allowBareLineFeedFallback: true }),
-    ).toBe(true);
   });
 
   it('does not treat plain Enter as newline insertion', () => {
