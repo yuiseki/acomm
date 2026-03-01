@@ -591,14 +591,33 @@ async fn send_discord_message(
 
     let client = reqwest::Client::new();
     let url = format!("{}/channels/{}/messages", DISCORD_API_BASE, channel_id);
-    client
+    let response = client
         .post(&url)
         .header("Authorization", format!("Bot {}", token))
         .header("Content-Type", "application/json")
         .json(&json!({ "content": truncated }))
         .send()
         .await?;
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    validate_discord_notify_response(status, &body)?;
     Ok(())
+}
+
+fn validate_discord_notify_response(
+    status: reqwest::StatusCode,
+    body: &str,
+) -> Result<(), Box<dyn Error>> {
+    if status.is_success() {
+        return Ok(());
+    }
+
+    let body = body.trim();
+    if body.is_empty() {
+        Err(format!("Discord notify failed with HTTP {}", status).into())
+    } else {
+        Err(format!("Discord notify failed with HTTP {}: {}", status, body).into())
+    }
 }
 
 /// POST /channels/{channel_id}/typing to show the typing indicator in Discord.
@@ -859,6 +878,32 @@ mod tests {
             }
             if let Some(v) = channel_backup { std::env::set_var("DISCORD_NOTIFY_CHANNEL_ID", v); }
         }
+    }
+
+    #[test]
+    fn test_validate_discord_notify_response_accepts_success() {
+        let result = validate_discord_notify_response(reqwest::StatusCode::OK, r#"{"id":"1"}"#);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_discord_notify_response_rejects_error_status_with_body() {
+        let result = validate_discord_notify_response(
+            reqwest::StatusCode::FORBIDDEN,
+            r#"{"message":"Missing Access","code":50001}"#,
+        );
+        let err = result.expect_err("should fail on non-success status");
+        let message = err.to_string();
+        assert!(message.contains("HTTP 403"));
+        assert!(message.contains("Missing Access"));
+    }
+
+    #[test]
+    fn test_validate_discord_notify_response_rejects_error_status_without_body() {
+        let result = validate_discord_notify_response(reqwest::StatusCode::NOT_FOUND, "");
+        let err = result.expect_err("should fail on non-success status");
+        let message = err.to_string();
+        assert!(message.contains("HTTP 404"));
     }
 
     // ─── extract_discord_answer tests ──────────────────────────────────────────
