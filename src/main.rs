@@ -6,7 +6,7 @@ mod ntfy;
 mod discord;
 
 use acore::AgentProvider;
-use clap::Parser;
+use clap::{Args, Parser, Subcommand};
 use crossterm::{
     event::{
         self, DisableMouseCapture, EnableMouseCapture, Event,
@@ -45,6 +45,27 @@ struct CliArgs {
     #[arg(long)] receive: bool,
     /// --receive のタイムアウト秒数。指定秒数内に入力がなければ exit 1 で終了する
     #[arg(long)] timeout: Option<u64>,
+    #[command(subcommand)]
+    command: Option<CliCommand>,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum CliCommand {
+    /// 外部チャネルの直近ログを取得する
+    Logs(LogArgs),
+}
+
+#[derive(Args, Debug, Clone)]
+struct LogArgs {
+    /// Discord の DISCORD_NOTIFY_CHANNEL_ID からログを取得する
+    #[arg(long)]
+    discord: bool,
+    /// 取得件数 (1-100)
+    #[arg(long, default_value_t = 10)]
+    limit: u8,
+    /// 整形せずに JSON を出力する
+    #[arg(long)]
+    json: bool,
 }
 
 const SOCKET_PATH: &str = "/tmp/acomm.sock";
@@ -52,6 +73,9 @@ const SOCKET_PATH: &str = "/tmp/acomm.sock";
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let args = CliArgs::parse();
+    if let Some(command) = args.command.clone() {
+        return run_command(command).await;
+    }
     if args.bridge { return bridge::start_bridge().await; }
 
     // --agent: send a proactive message as the bot without going through the AI pipeline.
@@ -102,6 +126,26 @@ async fn main() -> Result<(), Box<dyn Error>> {
     if args.dump { return start_dump().await; }
     if args.subscribe { return start_subscribe().await; }
     start_tui(args.channel.as_deref()).await
+}
+
+async fn run_command(command: CliCommand) -> Result<(), Box<dyn Error>> {
+    match command {
+        CliCommand::Logs(args) => {
+            if !args.discord {
+                return Err("logs currently requires --discord".into());
+            }
+
+            let entries = discord::fetch_recent_discord_messages(args.limit.into()).await?;
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&entries)?);
+            } else {
+                for line in discord::render_discord_log_lines(&entries) {
+                    println!("{line}");
+                }
+            }
+            Ok(())
+        }
+    }
 }
 
 async fn ensure_bridge_connection(auto_start: bool) -> Result<UnixStream, Box<dyn Error>> {
@@ -292,6 +336,28 @@ mod tests {
         assert!(channel_passes_filter(Some("discord:123:456"), true, true, false));
         assert!(channel_passes_filter(Some("slack:U1:C1"), true, true, false));
         assert!(!channel_passes_filter(Some("ntfy:msg1"), true, true, false));
+    }
+
+    #[test]
+    fn logs_subcommand_parses_discord_options() {
+        let args = CliArgs::try_parse_from([
+            "acomm",
+            "logs",
+            "--discord",
+            "--limit",
+            "5",
+            "--json",
+        ])
+        .expect("logs subcommand should parse");
+
+        match args.command {
+            Some(CliCommand::Logs(logs)) => {
+                assert!(logs.discord);
+                assert_eq!(logs.limit, 5);
+                assert!(logs.json);
+            }
+            other => panic!("expected logs subcommand, got: {:?}", other),
+        }
     }
 }
 

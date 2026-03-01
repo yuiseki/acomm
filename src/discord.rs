@@ -80,7 +80,30 @@ pub struct DiscordMessage {
 pub struct DiscordUser {
     pub id: String,
     pub username: String,
+    #[serde(default)]
+    pub global_name: Option<String>,
     pub bot: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscordLogEntry {
+    pub id: String,
+    pub channel_id: String,
+    pub timestamp: String,
+    pub content: String,
+    pub author_id: String,
+    pub author_username: String,
+    pub author_global_name: Option<String>,
+    pub author_is_bot: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct DiscordLogMessage {
+    id: String,
+    channel_id: String,
+    timestamp: String,
+    content: String,
+    author: DiscordUser,
 }
 
 #[derive(Debug, Clone)]
@@ -268,6 +291,33 @@ pub async fn notify_discord(text: &str) -> Result<(), Box<dyn Error>> {
     let channel_id = std::env::var("DISCORD_NOTIFY_CHANNEL_ID")
         .map_err(|_| "DISCORD_NOTIFY_CHANNEL_ID environment variable not set")?;
     send_discord_message(&token, &channel_id, text).await
+}
+
+pub async fn fetch_recent_discord_messages(limit: usize) -> Result<Vec<DiscordLogEntry>, Box<dyn Error>> {
+    let token = std::env::var("DISCORD_BOT_TOKEN")
+        .map_err(|_| "DISCORD_BOT_TOKEN environment variable not set")?;
+    let channel_id = std::env::var("DISCORD_NOTIFY_CHANNEL_ID")
+        .map_err(|_| "DISCORD_NOTIFY_CHANNEL_ID environment variable not set")?;
+    let limit = limit.clamp(1, 100);
+
+    let client = reqwest::Client::new();
+    let url = format!(
+        "{}/channels/{}/messages?limit={}",
+        DISCORD_API_BASE, channel_id, limit
+    );
+    let response = client
+        .get(&url)
+        .header("Authorization", format!("Bot {}", token))
+        .send()
+        .await?;
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    validate_discord_api_response(status, &body, "Discord logs fetch")?;
+    parse_discord_log_entries(&body)
+}
+
+pub fn render_discord_log_lines(entries: &[DiscordLogEntry]) -> Vec<String> {
+    entries.iter().map(render_discord_log_line).collect()
 }
 
 pub async fn start_discord_adapter() -> Result<(), Box<dyn Error>> {
@@ -608,16 +658,55 @@ fn validate_discord_notify_response(
     status: reqwest::StatusCode,
     body: &str,
 ) -> Result<(), Box<dyn Error>> {
+    validate_discord_api_response(status, body, "Discord notify")
+}
+
+fn validate_discord_api_response(
+    status: reqwest::StatusCode,
+    body: &str,
+    context: &str,
+) -> Result<(), Box<dyn Error>> {
     if status.is_success() {
         return Ok(());
     }
 
     let body = body.trim();
     if body.is_empty() {
-        Err(format!("Discord notify failed with HTTP {}", status).into())
+        Err(format!("{context} failed with HTTP {}", status).into())
     } else {
-        Err(format!("Discord notify failed with HTTP {}: {}", status, body).into())
+        Err(format!("{context} failed with HTTP {}: {}", status, body).into())
     }
+}
+
+fn parse_discord_log_entries(body: &str) -> Result<Vec<DiscordLogEntry>, Box<dyn Error>> {
+    let messages: Vec<DiscordLogMessage> = serde_json::from_str(body)?;
+    Ok(messages
+        .into_iter()
+        .map(|message| DiscordLogEntry {
+            id: message.id,
+            channel_id: message.channel_id,
+            timestamp: message.timestamp,
+            content: message.content,
+            author_id: message.author.id,
+            author_username: message.author.username,
+            author_global_name: message.author.global_name,
+            author_is_bot: message.author.bot.unwrap_or(false),
+        })
+        .collect())
+}
+
+fn render_discord_log_line(entry: &DiscordLogEntry) -> String {
+    let name = entry
+        .author_global_name
+        .as_deref()
+        .unwrap_or(&entry.author_username);
+    let bot_suffix = if entry.author_is_bot { " [bot]" } else { "" };
+    let content = entry.content.trim();
+    let content = if content.is_empty() { "<empty>" } else { content };
+    format!(
+        "[{}] {}{} (channel={}): {}",
+        entry.timestamp, name, bot_suffix, entry.channel_id, content
+    )
 }
 
 /// POST /channels/{channel_id}/typing to show the typing indicator in Discord.
@@ -835,6 +924,7 @@ mod tests {
             author: DiscordUser {
                 id: author_id.to_string(),
                 username: "user".to_string(),
+                global_name: None,
                 bot: Some(false),
             },
         }
@@ -904,6 +994,52 @@ mod tests {
         let err = result.expect_err("should fail on non-success status");
         let message = err.to_string();
         assert!(message.contains("HTTP 404"));
+    }
+
+    #[test]
+    fn test_parse_discord_log_entries_extracts_summary_fields() {
+        let entries = parse_discord_log_entries(
+            r#"[
+                {
+                    "id": "msg-1",
+                    "channel_id": "ch-1",
+                    "timestamp": "2026-03-01T10:17:06.243000+00:00",
+                    "content": "hello",
+                    "author": {
+                        "id": "user-1",
+                        "username": "yuiclaw",
+                        "global_name": "YuiClaw",
+                        "bot": true
+                    }
+                }
+            ]"#,
+        )
+        .expect("discord logs should parse");
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].id, "msg-1");
+        assert_eq!(entries[0].author_username, "yuiclaw");
+        assert_eq!(entries[0].author_global_name.as_deref(), Some("YuiClaw"));
+        assert!(entries[0].author_is_bot);
+    }
+
+    #[test]
+    fn test_render_discord_log_lines_formats_summary_output() {
+        let lines = render_discord_log_lines(&[DiscordLogEntry {
+            id: "msg-1".to_string(),
+            channel_id: "ch-1".to_string(),
+            timestamp: "2026-03-01T10:17:06.243000+00:00".to_string(),
+            content: "".to_string(),
+            author_id: "user-1".to_string(),
+            author_username: "yuiclaw".to_string(),
+            author_global_name: Some("YuiClaw".to_string()),
+            author_is_bot: true,
+        }]);
+
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].contains("2026-03-01T10:17:06.243000+00:00"));
+        assert!(lines[0].contains("YuiClaw [bot]"));
+        assert!(lines[0].contains("<empty>"));
     }
 
     // ─── extract_discord_answer tests ──────────────────────────────────────────
