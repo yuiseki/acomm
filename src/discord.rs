@@ -19,15 +19,16 @@
  * Optional (for reading guild message content reliably):
  *   MESSAGE_CONTENT (1 << 15) = 32768
  */
-
 use crate::protocol::ProtocolEvent;
+use futures_util::{Sink, SinkExt, StreamExt};
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
+use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
-use futures_util::{SinkExt, StreamExt};
-use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use tokio::time::Instant;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
 
@@ -157,6 +158,71 @@ fn build_presence_update_payload(status: &str) -> GatewayPayload {
         s: None,
         t: None,
     }
+}
+
+fn discord_heartbeat_ack_timeout_ms(interval_ms: u64) -> u64 {
+    interval_ms.saturating_add((interval_ms / 2).max(5_000))
+}
+
+fn discord_heartbeat_ack_is_overdue(
+    heartbeat_ack_pending: bool,
+    last_heartbeat_sent_at: Option<&Instant>,
+    heartbeat_interval_ms: u64,
+) -> Option<u64> {
+    if !heartbeat_ack_pending {
+        return None;
+    }
+
+    let sent_at = last_heartbeat_sent_at?;
+    let timeout_ms = discord_heartbeat_ack_timeout_ms(heartbeat_interval_ms);
+    if sent_at.elapsed() >= Duration::from_millis(timeout_ms) {
+        Some(timeout_ms)
+    } else {
+        None
+    }
+}
+
+async fn send_discord_gateway_payload<S>(
+    ws_sink: &mut S,
+    payload: &GatewayPayload,
+) -> Result<(), Box<dyn Error>>
+where
+    S: Sink<Message> + Unpin,
+    S::Error: std::fmt::Display,
+{
+    ws_sink
+        .send(Message::Text(serde_json::to_string(payload)?.into()))
+        .await
+        .map_err(|e| -> Box<dyn Error> {
+            format!("Discord Gateway websocket error: {}", e).into()
+        })?;
+    Ok(())
+}
+
+async fn send_discord_gateway_heartbeat<S>(
+    ws_sink: &mut S,
+    sequence: Option<u64>,
+    heartbeat_interval_ms: u64,
+    heartbeat_ack_pending: &mut bool,
+    last_heartbeat_sent_at: &mut Option<Instant>,
+) -> Result<(), Box<dyn Error>>
+where
+    S: Sink<Message> + Unpin,
+    S::Error: std::fmt::Display,
+{
+    if let Some(timeout_ms) = discord_heartbeat_ack_is_overdue(
+        *heartbeat_ack_pending,
+        last_heartbeat_sent_at.as_ref(),
+        heartbeat_interval_ms,
+    ) {
+        return Err(format!("Discord heartbeat ACK timed out after {}ms", timeout_ms).into());
+    }
+
+    let hb = build_heartbeat_payload(sequence);
+    send_discord_gateway_payload(ws_sink, &hb).await?;
+    *heartbeat_ack_pending = true;
+    *last_heartbeat_sent_at = Some(Instant::now());
+    Ok(())
 }
 
 fn parse_allowed_discord_user_ids(raw: &str) -> HashSet<String> {
@@ -293,7 +359,9 @@ pub async fn notify_discord(text: &str) -> Result<(), Box<dyn Error>> {
     send_discord_message(&token, &channel_id, text).await
 }
 
-pub async fn fetch_recent_discord_messages(limit: usize) -> Result<Vec<DiscordLogEntry>, Box<dyn Error>> {
+pub async fn fetch_recent_discord_messages(
+    limit: usize,
+) -> Result<Vec<DiscordLogEntry>, Box<dyn Error>> {
     let token = std::env::var("DISCORD_BOT_TOKEN")
         .map_err(|_| "DISCORD_BOT_TOKEN environment variable not set")?;
     let channel_id = std::env::var("DISCORD_NOTIFY_CHANNEL_ID")
@@ -359,6 +427,8 @@ pub async fn start_discord_adapter() -> Result<(), Box<dyn Error>> {
 
     // Heartbeat ticker (fires after first HELLO)
     let mut heartbeat_ticker: Option<tokio::time::Interval> = None;
+    let mut heartbeat_ack_pending = false;
+    let mut last_heartbeat_sent_at: Option<Instant> = None;
 
     loop {
         tokio::select! {
@@ -366,7 +436,9 @@ pub async fn start_discord_adapter() -> Result<(), Box<dyn Error>> {
             ws_msg = ws_stream.next() => {
                 let msg = match ws_msg {
                     Some(Ok(m)) => m,
-                    Some(Err(e)) => return Err(format!("WebSocket error: {}", e).into()),
+                    Some(Err(e)) => {
+                        return Err(format!("Discord Gateway websocket error: {}", e).into());
+                    }
                     None => return Err("Discord Gateway disconnected".into()),
                 };
 
@@ -402,16 +474,23 @@ pub async fn start_discord_adapter() -> Result<(), Box<dyn Error>> {
                         ));
                         // Send IDENTIFY
                         let identify = build_identify_payload(&token);
-                        ws_sink.send(Message::Text(serde_json::to_string(&identify)?.into())).await?;
+                        send_discord_gateway_payload(&mut ws_sink, &identify).await?;
                         println!("Sent IDENTIFY to Discord Gateway.");
                     }
                     OP_HEARTBEAT_ACK => {
                         // Heartbeat acknowledged — connection is healthy.
+                        heartbeat_ack_pending = false;
+                        last_heartbeat_sent_at = None;
                     }
                     OP_HEARTBEAT => {
                         // Server-requested heartbeat
-                        let hb = build_heartbeat_payload(sequence);
-                        ws_sink.send(Message::Text(serde_json::to_string(&hb)?.into())).await?;
+                        send_discord_gateway_heartbeat(
+                            &mut ws_sink,
+                            sequence,
+                            heartbeat_interval_ms,
+                            &mut heartbeat_ack_pending,
+                            &mut last_heartbeat_sent_at,
+                        ).await?;
                     }
                     OP_DISPATCH => {
                         sequence = payload.s;
@@ -424,9 +503,7 @@ pub async fn start_discord_adapter() -> Result<(), Box<dyn Error>> {
                                     }
                                 }
                                 let presence = build_presence_update_payload(DISCORD_PRESENCE_ONLINE);
-                                ws_sink
-                                    .send(Message::Text(serde_json::to_string(&presence)?.into()))
-                                    .await?;
+                                send_discord_gateway_payload(&mut ws_sink, &presence).await?;
                                 discord_gateway_ready = true;
                                 discord_presence_status = DISCORD_PRESENCE_ONLINE.to_string();
                                 println!("Discord presence set to {}.", DISCORD_PRESENCE_ONLINE);
@@ -478,8 +555,13 @@ pub async fn start_discord_adapter() -> Result<(), Box<dyn Error>> {
                     std::future::pending::<tokio::time::Instant>().await
                 }
             } => {
-                let hb = build_heartbeat_payload(sequence);
-                ws_sink.send(Message::Text(serde_json::to_string(&hb)?.into())).await?;
+                send_discord_gateway_heartbeat(
+                    &mut ws_sink,
+                    sequence,
+                    heartbeat_interval_ms,
+                    &mut heartbeat_ack_pending,
+                    &mut last_heartbeat_sent_at,
+                ).await?;
             }
 
             // Bridge protocol events
@@ -489,11 +571,7 @@ pub async fn start_discord_adapter() -> Result<(), Box<dyn Error>> {
                     None => {
                         if discord_gateway_ready {
                             let presence = build_presence_update_payload(DISCORD_PRESENCE_INVISIBLE);
-                            let _ = ws_sink
-                                .send(Message::Text(
-                                    serde_json::to_string(&presence)?.into(),
-                                ))
-                                .await;
+                            let _ = send_discord_gateway_payload(&mut ws_sink, &presence).await;
                             println!(
                                 "Discord presence set to {} before adapter shutdown.",
                                 DISCORD_PRESENCE_INVISIBLE
@@ -561,9 +639,7 @@ pub async fn start_discord_adapter() -> Result<(), Box<dyn Error>> {
                             }
                             if should_switch_presence_to_dnd {
                                 let presence = build_presence_update_payload(DISCORD_PRESENCE_DND);
-                                ws_sink
-                                    .send(Message::Text(serde_json::to_string(&presence)?.into()))
-                                    .await?;
+                                send_discord_gateway_payload(&mut ws_sink, &presence).await?;
                                 discord_presence_status = DISCORD_PRESENCE_DND.to_string();
                                 println!("Discord presence set to {}.", DISCORD_PRESENCE_DND);
                             }
@@ -601,9 +677,7 @@ pub async fn start_discord_adapter() -> Result<(), Box<dyn Error>> {
                                 && discord_presence_status != DISCORD_PRESENCE_ONLINE
                             {
                                 let presence = build_presence_update_payload(DISCORD_PRESENCE_ONLINE);
-                                ws_sink
-                                    .send(Message::Text(serde_json::to_string(&presence)?.into()))
-                                    .await?;
+                                send_discord_gateway_payload(&mut ws_sink, &presence).await?;
                                 discord_presence_status = DISCORD_PRESENCE_ONLINE.to_string();
                                 println!("Discord presence set to {}.", DISCORD_PRESENCE_ONLINE);
                             }
@@ -702,7 +776,11 @@ fn render_discord_log_line(entry: &DiscordLogEntry) -> String {
         .unwrap_or(&entry.author_username);
     let bot_suffix = if entry.author_is_bot { " [bot]" } else { "" };
     let content = entry.content.trim();
-    let content = if content.is_empty() { "<empty>" } else { content };
+    let content = if content.is_empty() {
+        "<empty>"
+    } else {
+        content
+    };
     format!(
         "[{}] {}{} (channel={}): {}",
         entry.timestamp, name, bot_suffix, entry.channel_id, content
@@ -795,7 +873,12 @@ mod tests {
     #[test]
     fn test_transform_discord_message() {
         let event = transform_discord_message("Hello 執事！", "987654321", "111222333");
-        if let ProtocolEvent::Prompt { text, channel, provider } = event {
+        if let ProtocolEvent::Prompt {
+            text,
+            channel,
+            provider,
+        } = event
+        {
             assert_eq!(text, "Hello 執事！");
             assert_eq!(channel, Some("discord:987654321:111222333".to_string()));
             assert!(provider.is_none());
@@ -809,9 +892,16 @@ mod tests {
         let event = transform_discord_message("test", "ch123", "msg456");
         if let ProtocolEvent::Prompt { channel, .. } = event {
             let ch = channel.unwrap();
-            assert!(ch.starts_with("discord:"), "Channel must start with 'discord:'");
+            assert!(
+                ch.starts_with("discord:"),
+                "Channel must start with 'discord:'"
+            );
             let parts: Vec<&str> = ch.splitn(3, ':').collect();
-            assert_eq!(parts.len(), 3, "Channel must have 3 parts: discord:channel_id:message_id");
+            assert_eq!(
+                parts.len(),
+                3,
+                "Channel must have 3 parts: discord:channel_id:message_id"
+            );
             assert_eq!(parts[1], "ch123");
             assert_eq!(parts[2], "msg456");
         } else {
@@ -845,11 +935,7 @@ mod tests {
 
     #[test]
     fn test_format_discord_agent_reply_with_status_appends_suffix() {
-        let reply = format_discord_agent_reply_with_status(
-            "pong",
-            "gemini",
-            "auto-gemini-3",
-        );
+        let reply = format_discord_agent_reply_with_status("pong", "gemini", "auto-gemini-3");
         assert!(reply.starts_with("pong"));
         assert!(reply.ends_with("__gemini:auto-gemini-3__"));
         assert!(reply.contains("\n\n__gemini:auto-gemini-3__"));
@@ -859,11 +945,7 @@ mod tests {
     #[test]
     fn test_format_discord_agent_reply_with_status_preserves_suffix_when_truncated() {
         let body = "あ".repeat(2500);
-        let reply = format_discord_agent_reply_with_status(
-            &body,
-            "claude",
-            "claude-sonnet-4-6",
-        );
+        let reply = format_discord_agent_reply_with_status(&body, "claude", "claude-sonnet-4-6");
         assert!(reply.ends_with("__claude:claude-sonnet-4-6__"));
         assert!(reply.chars().count() <= 1900);
     }
@@ -882,13 +964,27 @@ mod tests {
     fn test_identify_payload_uses_discord_properties_keys() {
         let payload = build_identify_payload("dummy-token");
         let d = payload.d.expect("identify payload must include d");
-        let props = d.get("properties").expect("identify payload must include properties");
+        let props = d
+            .get("properties")
+            .expect("identify payload must include properties");
         assert!(props.get("os").is_some(), "Discord IDENTIFY requires os");
-        assert!(props.get("browser").is_some(), "Discord IDENTIFY requires browser");
-        assert!(props.get("device").is_some(), "Discord IDENTIFY requires device");
+        assert!(
+            props.get("browser").is_some(),
+            "Discord IDENTIFY requires browser"
+        );
+        assert!(
+            props.get("device").is_some(),
+            "Discord IDENTIFY requires device"
+        );
         assert!(props.get("$os").is_none(), "$os key should not be sent");
-        assert!(props.get("$browser").is_none(), "$browser key should not be sent");
-        assert!(props.get("$device").is_none(), "$device key should not be sent");
+        assert!(
+            props.get("$browser").is_none(),
+            "$browser key should not be sent"
+        );
+        assert!(
+            props.get("$device").is_none(),
+            "$device key should not be sent"
+        );
     }
 
     #[test]
@@ -896,7 +992,16 @@ mod tests {
         let payload = build_heartbeat_payload(None);
         let json = serde_json::to_string(&payload).expect("heartbeat payload must serialize");
         assert!(json.contains(r#""op":1"#));
-        assert!(json.contains(r#""d":null"#), "Discord heartbeat must include d:null before first sequence");
+        assert!(
+            json.contains(r#""d":null"#),
+            "Discord heartbeat must include d:null before first sequence"
+        );
+    }
+
+    #[test]
+    fn test_discord_heartbeat_ack_timeout_adds_grace_window() {
+        assert_eq!(discord_heartbeat_ack_timeout_ms(1_000), 6_000);
+        assert_eq!(discord_heartbeat_ack_timeout_ms(41_250), 61_875);
     }
 
     #[test]
@@ -908,9 +1013,7 @@ mod tests {
         assert_eq!(d.get("afk").and_then(Value::as_bool), Some(false));
         assert_eq!(d.get("since"), Some(&Value::Null));
         assert_eq!(
-            d.get("activities")
-                .and_then(Value::as_array)
-                .map(Vec::len),
+            d.get("activities").and_then(Value::as_array).map(Vec::len),
             Some(0),
             "presence activities should default to empty list"
         );
@@ -942,7 +1045,10 @@ mod tests {
             std::env::remove_var("DISCORD_NOTIFY_CHANNEL_ID");
         }
         let result = notify_discord("test").await;
-        assert!(result.is_err(), "should fail when DISCORD_BOT_TOKEN is missing");
+        assert!(
+            result.is_err(),
+            "should fail when DISCORD_BOT_TOKEN is missing"
+        );
         assert!(
             format!("{}", result.unwrap_err()).contains("DISCORD_BOT_TOKEN"),
             "error should mention DISCORD_BOT_TOKEN"
@@ -954,7 +1060,10 @@ mod tests {
             std::env::remove_var("DISCORD_NOTIFY_CHANNEL_ID");
         }
         let result = notify_discord("test").await;
-        assert!(result.is_err(), "should fail when DISCORD_NOTIFY_CHANNEL_ID is missing");
+        assert!(
+            result.is_err(),
+            "should fail when DISCORD_NOTIFY_CHANNEL_ID is missing"
+        );
         assert!(
             format!("{}", result.unwrap_err()).contains("DISCORD_NOTIFY_CHANNEL_ID"),
             "error should mention DISCORD_NOTIFY_CHANNEL_ID"
@@ -966,7 +1075,9 @@ mod tests {
                 Some(v) => std::env::set_var("DISCORD_BOT_TOKEN", v),
                 None => std::env::remove_var("DISCORD_BOT_TOKEN"),
             }
-            if let Some(v) = channel_backup { std::env::set_var("DISCORD_NOTIFY_CHANNEL_ID", v); }
+            if let Some(v) = channel_backup {
+                std::env::set_var("DISCORD_NOTIFY_CHANNEL_ID", v);
+            }
         }
     }
 
@@ -1064,9 +1175,15 @@ mod tests {
         let answer = "本日の天気カレンダーを日本語に修正いたしました。修正内容は以下の通りです。";
         let padding = "x".repeat(2000); // ensures total > 1900
         let full = format!("{}{}\n\n{}", padding, thinking.trim(), answer);
-        assert!(full.chars().count() > 1900, "Precondition: full content must exceed 1900 chars");
+        assert!(
+            full.chars().count() > 1900,
+            "Precondition: full content must exceed 1900 chars"
+        );
         let result = extract_discord_answer(&full);
-        assert_eq!(result, answer, "Should extract the last paragraph as the final answer");
+        assert_eq!(
+            result, answer,
+            "Should extract the last paragraph as the final answer"
+        );
     }
 
     #[test]
@@ -1076,9 +1193,15 @@ mod tests {
         let padding = "x".repeat(2000); // ensures total > 1900
         // Last block is only "OK" (too short), penultimate block is the real answer.
         let full = format!("{}\n\n{}\n\nOK", padding, early_answer);
-        assert!(full.chars().count() > 1900, "Precondition: full content must exceed 1900 chars");
+        assert!(
+            full.chars().count() > 1900,
+            "Precondition: full content must exceed 1900 chars"
+        );
         let result = extract_discord_answer(&full);
-        assert_eq!(result, early_answer, "Should skip short trailing block and use earlier paragraph");
+        assert_eq!(
+            result, early_answer,
+            "Should skip short trailing block and use earlier paragraph"
+        );
     }
 
     #[test]
@@ -1087,8 +1210,14 @@ mod tests {
         // Discord limits are character-based, so we check chars().count().
         let content = "a".repeat(2000);
         let result = extract_discord_answer(&content);
-        assert!(result.starts_with('…'), "Should start with ellipsis when truncated");
-        assert!(result.chars().count() <= 1900, "Result must fit within Discord 1900-char limit");
+        assert!(
+            result.starts_with('…'),
+            "Should start with ellipsis when truncated"
+        );
+        assert!(
+            result.chars().count() <= 1900,
+            "Result must fit within Discord 1900-char limit"
+        );
     }
 
     #[test]

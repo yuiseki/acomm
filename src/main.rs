@@ -1,50 +1,62 @@
-mod protocol;
 mod bridge;
-mod tui;
-mod slack;
-mod ntfy;
 mod discord;
+mod ntfy;
+mod protocol;
+mod slack;
+mod tui;
 
 use acore::AgentProvider;
 use clap::{Args, Parser, Subcommand};
 use crossterm::{
     event::{
-        self, DisableMouseCapture, EnableMouseCapture, Event,
-        KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyboardEnhancementFlags,
+        PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
     },
     execute,
     terminal::{
-        disable_raw_mode, enable_raw_mode, supports_keyboard_enhancement,
-        EnterAlternateScreen, LeaveAlternateScreen,
+        EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+        supports_keyboard_enhancement,
     },
 };
-use ratatui::{backend::CrosstermBackend, Terminal};
 use protocol::ProtocolEvent;
-use tui::{App, AppEvent, InputMode, InputState};
+use ratatui::{Terminal, backend::CrosstermBackend};
 use std::{error::Error, io, path::Path};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 use tokio::sync::mpsc;
+use tui::{App, AppEvent, InputMode, InputState};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct CliArgs {
-    #[arg(short, long)] bridge: bool,
-    #[arg(short, long)] publish: Option<String>,
-    #[arg(short, long)] channel: Option<String>,
-    #[arg(short, long, alias = "s")] subscribe: bool,
-    #[arg(short, long)] dump: bool,
-    #[arg(short, long)] reset: bool,
-    #[arg(long)] slack: bool,
-    #[arg(long)] ntfy: bool,
-    #[arg(long)] discord: bool,
+    #[arg(short, long)]
+    bridge: bool,
+    #[arg(short, long)]
+    publish: Option<String>,
+    #[arg(short, long)]
+    channel: Option<String>,
+    #[arg(short, long, alias = "s")]
+    subscribe: bool,
+    #[arg(short, long)]
+    dump: bool,
+    #[arg(short, long)]
+    reset: bool,
+    #[arg(long)]
+    slack: bool,
+    #[arg(long)]
+    ntfy: bool,
+    #[arg(long)]
+    discord: bool,
     /// エージェントとしてメッセージを送信する (--discord / --slack / --ntfy で送信先を指定)
-    #[arg(long)] agent: Option<String>,
+    #[arg(long)]
+    agent: Option<String>,
     /// ユーザーからの入力を1件受信して標準出力し、即終了する
     /// (--discord / --slack / --ntfy でチャンネルをフィルタ可能)
-    #[arg(long)] receive: bool,
+    #[arg(long)]
+    receive: bool,
     /// --receive のタイムアウト秒数。指定秒数内に入力がなければ exit 1 で終了する
-    #[arg(long)] timeout: Option<u64>,
+    #[arg(long)]
+    timeout: Option<u64>,
     #[command(subcommand)]
     command: Option<CliCommand>,
 }
@@ -76,7 +88,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     if let Some(command) = args.command.clone() {
         return run_command(command).await;
     }
-    if args.bridge { return bridge::start_bridge().await; }
+    if args.bridge {
+        return bridge::start_bridge().await;
+    }
 
     // --agent: send a proactive message as the bot without going through the AI pipeline.
     // --discord / --slack / --ntfy narrow the targets; omitting all sends to every
@@ -111,7 +125,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
         return receive_from_bridge(args.discord, args.slack, args.ntfy, args.timeout).await;
     }
 
-    if args.reset { return publish_to_bridge("/clear", Some("bridge")).await; }
+    if args.reset {
+        return publish_to_bridge("/clear", Some("bridge")).await;
+    }
     if args.slack {
         loop {
             match slack::start_slack_adapter().await {
@@ -131,7 +147,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
             }
         }
     }
-    if args.ntfy { return ntfy::start_ntfy_adapter().await; }
+    if args.ntfy {
+        return ntfy::start_ntfy_adapter().await;
+    }
     if args.discord {
         loop {
             match discord::start_discord_adapter().await {
@@ -159,8 +177,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }
         return publish_to_bridge(&msg, args.channel.as_deref()).await;
     }
-    if args.dump { return start_dump().await; }
-    if args.subscribe { return start_subscribe().await; }
+    if args.dump {
+        return start_dump().await;
+    }
+    if args.subscribe {
+        return start_subscribe().await;
+    }
     start_tui(args.channel.as_deref()).await
 }
 
@@ -186,13 +208,17 @@ async fn run_command(command: CliCommand) -> Result<(), Box<dyn Error>> {
 
 async fn ensure_bridge_connection(auto_start: bool) -> Result<UnixStream, Box<dyn Error>> {
     if !auto_start {
-        return UnixStream::connect(SOCKET_PATH).await.map_err(|e| format!("Bridge not running: {e}").into());
+        return UnixStream::connect(SOCKET_PATH)
+            .await
+            .map_err(|e| format!("Bridge not running: {e}").into());
     }
     for _ in 0..3 {
         match UnixStream::connect(SOCKET_PATH).await {
             Ok(s) => return Ok(s),
             Err(_) => {
-                if Path::new(SOCKET_PATH).exists() { let _ = std::fs::remove_file(SOCKET_PATH); }
+                if Path::new(SOCKET_PATH).exists() {
+                    let _ = std::fs::remove_file(SOCKET_PATH);
+                }
                 let exe = std::env::current_exe()?;
                 let _ = std::process::Command::new(exe).arg("--bridge").spawn();
                 tokio::time::sleep(std::time::Duration::from_millis(500)).await;
@@ -204,7 +230,11 @@ async fn ensure_bridge_connection(auto_start: bool) -> Result<UnixStream, Box<dy
 
 async fn publish_to_bridge(msg: &str, channel: Option<&str>) -> Result<(), Box<dyn Error>> {
     let mut stream = ensure_bridge_connection(false).await?;
-    let event = ProtocolEvent::Prompt { text: msg.to_string(), provider: None, channel: channel.map(|s| s.to_string()) };
+    let event = ProtocolEvent::Prompt {
+        text: msg.to_string(),
+        provider: None,
+        channel: channel.map(|s| s.to_string()),
+    };
     let j = serde_json::to_string(&event)?;
     stream.write_all(format!("{}\n", j).as_bytes()).await?;
     let _ = stream.shutdown().await;
@@ -228,11 +258,19 @@ async fn start_dump() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn display_event(event: &ProtocolEvent, active_provider_name: &mut String, is_start_of_line: &mut bool) -> io::Result<()> {
+fn display_event(
+    event: &ProtocolEvent,
+    active_provider_name: &mut String,
+    is_start_of_line: &mut bool,
+) -> io::Result<()> {
     match event {
         ProtocolEvent::Prompt { text, channel, .. } => {
             println!("\n--- (Start) ---");
-            println!("[user][{}] {}", channel.as_deref().unwrap_or("unknown"), text);
+            println!(
+                "[user][{}] {}",
+                channel.as_deref().unwrap_or("unknown"),
+                text
+            );
             *is_start_of_line = true;
         }
         ProtocolEvent::AgentChunk { chunk, .. } => {
@@ -242,20 +280,31 @@ fn display_event(event: &ProtocolEvent, active_provider_name: &mut String, is_st
                     *is_start_of_line = false;
                 }
                 print!("{line}");
-                if line.ends_with('\n') { *is_start_of_line = true; }
+                if line.ends_with('\n') {
+                    *is_start_of_line = true;
+                }
             }
         }
         ProtocolEvent::AgentDone { .. } => {
-            if !*is_start_of_line { println!(); }
+            if !*is_start_of_line {
+                println!();
+            }
             *is_start_of_line = true;
         }
         ProtocolEvent::ProviderSwitched { provider } => {
             *active_provider_name = provider.command_name().to_string();
-            println!("\n[System]: Active provider switched to {}", active_provider_name);
+            println!(
+                "\n[System]: Active provider switched to {}",
+                active_provider_name
+            );
             *is_start_of_line = true;
         }
         ProtocolEvent::SystemMessage { msg, channel } => {
-            println!("\n[System ({})]: {}", channel.as_deref().unwrap_or("bridge"), msg);
+            println!(
+                "\n[System ({})]: {}",
+                channel.as_deref().unwrap_or("bridge"),
+                msg
+            );
             *is_start_of_line = true;
         }
         _ => {}
@@ -334,7 +383,27 @@ fn channel_passes_filter(channel: Option<&str>, discord: bool, slack: bool, ntfy
 
 /// Discord Gateway の一時的な再接続要求だけを再試行対象にする。
 fn should_retry_discord_adapter_error(message: &str) -> bool {
-    message.contains("Discord Gateway closed connection: code=1001")
+    if message.contains("Discord Gateway disconnected")
+        || message.contains("Discord heartbeat ACK timed out")
+        || message.contains("Discord Gateway websocket error:")
+        || message.contains("WebSocket error:")
+    {
+        return true;
+    }
+
+    if !message.starts_with("Discord Gateway closed connection") {
+        return false;
+    }
+
+    let Some(code_fragment) = message.split("code=").nth(1) else {
+        return true;
+    };
+    let code = code_fragment
+        .split(|ch: char| !ch.is_ascii_digit())
+        .find(|part| !part.is_empty())
+        .and_then(|part| part.parse::<u16>().ok());
+
+    matches!(code, Some(1000) | Some(1001) | Some(1012) | Some(1013))
 }
 
 /// Slack Socket Mode の一時切断/タイムアウトだけを再試行対象にする。
@@ -354,45 +423,109 @@ mod tests {
     #[test]
     fn filter_accepts_any_when_no_flags_set() {
         assert!(channel_passes_filter(None, false, false, false));
-        assert!(channel_passes_filter(Some("discord:123:456"), false, false, false));
-        assert!(channel_passes_filter(Some("slack:U1:C1"), false, false, false));
-        assert!(channel_passes_filter(Some("ntfy:msg1"), false, false, false));
+        assert!(channel_passes_filter(
+            Some("discord:123:456"),
+            false,
+            false,
+            false
+        ));
+        assert!(channel_passes_filter(
+            Some("slack:U1:C1"),
+            false,
+            false,
+            false
+        ));
+        assert!(channel_passes_filter(
+            Some("ntfy:msg1"),
+            false,
+            false,
+            false
+        ));
     }
 
     #[test]
     fn filter_discord_accepts_only_discord_prefix() {
-        assert!(channel_passes_filter(Some("discord:123:456"), true, false, false));
-        assert!(!channel_passes_filter(Some("slack:U1:C1"), true, false, false));
-        assert!(!channel_passes_filter(Some("ntfy:msg1"), true, false, false));
+        assert!(channel_passes_filter(
+            Some("discord:123:456"),
+            true,
+            false,
+            false
+        ));
+        assert!(!channel_passes_filter(
+            Some("slack:U1:C1"),
+            true,
+            false,
+            false
+        ));
+        assert!(!channel_passes_filter(
+            Some("ntfy:msg1"),
+            true,
+            false,
+            false
+        ));
         assert!(!channel_passes_filter(None, true, false, false));
     }
 
     #[test]
     fn filter_slack_accepts_only_slack_prefix() {
-        assert!(channel_passes_filter(Some("slack:U1:C1"), false, true, false));
-        assert!(!channel_passes_filter(Some("discord:123:456"), false, true, false));
-        assert!(!channel_passes_filter(Some("ntfy:msg1"), false, true, false));
+        assert!(channel_passes_filter(
+            Some("slack:U1:C1"),
+            false,
+            true,
+            false
+        ));
+        assert!(!channel_passes_filter(
+            Some("discord:123:456"),
+            false,
+            true,
+            false
+        ));
+        assert!(!channel_passes_filter(
+            Some("ntfy:msg1"),
+            false,
+            true,
+            false
+        ));
     }
 
     #[test]
     fn filter_ntfy_accepts_only_ntfy_prefix() {
         assert!(channel_passes_filter(Some("ntfy:msg1"), false, false, true));
-        assert!(!channel_passes_filter(Some("discord:123:456"), false, false, true));
-        assert!(!channel_passes_filter(Some("slack:U1:C1"), false, false, true));
+        assert!(!channel_passes_filter(
+            Some("discord:123:456"),
+            false,
+            false,
+            true
+        ));
+        assert!(!channel_passes_filter(
+            Some("slack:U1:C1"),
+            false,
+            false,
+            true
+        ));
     }
 
     #[test]
     fn filter_multiple_flags_accepts_any_matching() {
         // discord + slack
-        assert!(channel_passes_filter(Some("discord:123:456"), true, true, false));
-        assert!(channel_passes_filter(Some("slack:U1:C1"), true, true, false));
+        assert!(channel_passes_filter(
+            Some("discord:123:456"),
+            true,
+            true,
+            false
+        ));
+        assert!(channel_passes_filter(
+            Some("slack:U1:C1"),
+            true,
+            true,
+            false
+        ));
         assert!(!channel_passes_filter(Some("ntfy:msg1"), true, true, false));
     }
 
     #[test]
     fn discord_retry_error_detects_gateway_1001_close() {
-        let msg =
-            "Discord Gateway closed connection: code=1001 reason=Discord WebSocket requesting client reconnect.";
+        let msg = "Discord Gateway closed connection: code=1001 reason=Discord WebSocket requesting client reconnect.";
         assert!(should_retry_discord_adapter_error(msg));
     }
 
@@ -409,6 +542,39 @@ mod tests {
     }
 
     #[test]
+    fn discord_retry_error_detects_gateway_disconnect_and_heartbeat_timeout() {
+        assert!(should_retry_discord_adapter_error(
+            "Discord Gateway disconnected"
+        ));
+        assert!(should_retry_discord_adapter_error(
+            "Discord Gateway closed connection"
+        ));
+        assert!(should_retry_discord_adapter_error(
+            "Discord heartbeat ACK timed out after 61875ms"
+        ));
+    }
+
+    #[test]
+    fn discord_retry_error_detects_websocket_transport_errors() {
+        assert!(should_retry_discord_adapter_error(
+            "Discord Gateway websocket error: Connection reset without closing handshake"
+        ));
+        assert!(should_retry_discord_adapter_error(
+            "WebSocket error: Connection reset without closing handshake"
+        ));
+    }
+
+    #[test]
+    fn discord_retry_error_detects_other_reconnectable_gateway_close_codes() {
+        let normal_close = "Discord Gateway closed connection: code=1000 reason=Normal Closure";
+        let service_restart = "Discord Gateway closed connection: code=1012 reason=Service Restart";
+        let try_again_later = "Discord Gateway closed connection: code=1013 reason=Try Again Later";
+        assert!(should_retry_discord_adapter_error(normal_close));
+        assert!(should_retry_discord_adapter_error(service_restart));
+        assert!(should_retry_discord_adapter_error(try_again_later));
+    }
+
+    #[test]
     fn slack_retry_error_detects_reqwest_timeout_decode_message() {
         let msg = r#"reqwest::Error { kind: Decode, source: hyper::Error(Body, Error { kind: Io(Kind(TimedOut)) }) }"#;
         assert!(should_retry_slack_adapter_error(msg));
@@ -416,9 +582,15 @@ mod tests {
 
     #[test]
     fn slack_retry_error_detects_slack_disconnect_messages() {
-        assert!(should_retry_slack_adapter_error("Slack Socket Mode disconnected"));
-        assert!(should_retry_slack_adapter_error("Slack requested disconnect"));
-        assert!(should_retry_slack_adapter_error("Slack closed the WebSocket connection"));
+        assert!(should_retry_slack_adapter_error(
+            "Slack Socket Mode disconnected"
+        ));
+        assert!(should_retry_slack_adapter_error(
+            "Slack requested disconnect"
+        ));
+        assert!(should_retry_slack_adapter_error(
+            "Slack closed the WebSocket connection"
+        ));
     }
 
     #[test]
@@ -433,15 +605,9 @@ mod tests {
 
     #[test]
     fn logs_subcommand_parses_discord_options() {
-        let args = CliArgs::try_parse_from([
-            "acomm",
-            "logs",
-            "--discord",
-            "--limit",
-            "5",
-            "--json",
-        ])
-        .expect("logs subcommand should parse");
+        let args =
+            CliArgs::try_parse_from(["acomm", "logs", "--discord", "--limit", "5", "--json"])
+                .expect("logs subcommand should parse");
 
         match args.command {
             Some(CliCommand::Logs(logs)) => {
@@ -507,10 +673,15 @@ async fn start_tui(channel: Option<&str>) -> Result<(), Box<dyn Error>> {
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout))?;
     let (tx, rx) = mpsc::channel(100);
     let app = App {
-        input: InputState::new(), input_mode: InputMode::Normal, messages: Vec::new(),
-        active_cli: AgentProvider::Gemini, is_processing: false, scroll: 0,
+        input: InputState::new(),
+        input_mode: InputMode::Normal,
+        messages: Vec::new(),
+        active_cli: AgentProvider::Gemini,
+        is_processing: false,
+        scroll: 0,
         auto_scroll: true,
-        channel: channel.unwrap_or("tui").to_string(), spinner_idx: 0,
+        channel: channel.unwrap_or("tui").to_string(),
+        spinner_idx: 0,
     };
     let tx_bridge = tx.clone();
     let bridge_handle = tokio::spawn(async move {
@@ -535,16 +706,24 @@ async fn start_tui(channel: Option<&str>) -> Result<(), Box<dyn Error>> {
     let tick_handle = tokio::spawn(async move {
         loop {
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-            if let Err(_) = tx_tick.send(AppEvent::Tick).await { break; }
+            if let Err(_) = tx_tick.send(AppEvent::Tick).await {
+                break;
+            }
         }
     });
     let _ = tui::run_tui_app(&mut terminal, app, &mut writer, rx).await;
-    bridge_handle.abort(); input_handle.abort(); tick_handle.abort();
+    bridge_handle.abort();
+    input_handle.abort();
+    tick_handle.abort();
     disable_raw_mode()?;
     if keyboard_enhanced {
         let _ = execute!(terminal.backend_mut(), PopKeyboardEnhancementFlags);
     }
-    execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
+    execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        DisableMouseCapture
+    )?;
     terminal.show_cursor()?;
     Ok(())
 }
