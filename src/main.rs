@@ -112,9 +112,45 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
 
     if args.reset { return publish_to_bridge("/clear", Some("bridge")).await; }
-    if args.slack { return slack::start_slack_adapter().await; }
+    if args.slack {
+        loop {
+            match slack::start_slack_adapter().await {
+                Ok(()) => return Ok(()),
+                Err(e) => {
+                    let message = e.to_string();
+                    if should_retry_slack_adapter_error(&message) {
+                        eprintln!(
+                            "Slack adapter transient error; retrying in 2s ({})",
+                            message
+                        );
+                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                        continue;
+                    }
+                    return Err(e);
+                }
+            }
+        }
+    }
     if args.ntfy { return ntfy::start_ntfy_adapter().await; }
-    if args.discord { return discord::start_discord_adapter().await; }
+    if args.discord {
+        loop {
+            match discord::start_discord_adapter().await {
+                Ok(()) => return Ok(()),
+                Err(e) => {
+                    let message = e.to_string();
+                    if should_retry_discord_adapter_error(&message) {
+                        eprintln!(
+                            "Discord adapter reconnect requested by gateway; retrying in 2s ({})",
+                            message
+                        );
+                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                        continue;
+                    }
+                    return Err(e);
+                }
+            }
+        }
+    }
     if let Some(mut msg) = args.publish {
         if msg == "-" {
             let mut buffer = String::new();
@@ -296,6 +332,21 @@ fn channel_passes_filter(channel: Option<&str>, discord: bool, slack: bool, ntfy
         || (ntfy && ch.starts_with("ntfy:"))
 }
 
+/// Discord Gateway の一時的な再接続要求だけを再試行対象にする。
+fn should_retry_discord_adapter_error(message: &str) -> bool {
+    message.contains("Discord Gateway closed connection: code=1001")
+}
+
+/// Slack Socket Mode の一時切断/タイムアウトだけを再試行対象にする。
+fn should_retry_slack_adapter_error(message: &str) -> bool {
+    let m = message.to_ascii_lowercase();
+    m.contains("timedout")
+        || m.contains("timed out")
+        || m.contains("slack socket mode disconnected")
+        || m.contains("slack requested disconnect")
+        || m.contains("slack closed the websocket connection")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -336,6 +387,48 @@ mod tests {
         assert!(channel_passes_filter(Some("discord:123:456"), true, true, false));
         assert!(channel_passes_filter(Some("slack:U1:C1"), true, true, false));
         assert!(!channel_passes_filter(Some("ntfy:msg1"), true, true, false));
+    }
+
+    #[test]
+    fn discord_retry_error_detects_gateway_1001_close() {
+        let msg =
+            "Discord Gateway closed connection: code=1001 reason=Discord WebSocket requesting client reconnect.";
+        assert!(should_retry_discord_adapter_error(msg));
+    }
+
+    #[test]
+    fn discord_retry_error_does_not_match_other_gateway_close_codes() {
+        let msg = "Discord Gateway closed connection: code=4004 reason=Authentication failed.";
+        assert!(!should_retry_discord_adapter_error(msg));
+    }
+
+    #[test]
+    fn discord_retry_error_does_not_match_unrelated_errors() {
+        let msg = "Bridge is not running. Please start it with 'acomm --bridge'.";
+        assert!(!should_retry_discord_adapter_error(msg));
+    }
+
+    #[test]
+    fn slack_retry_error_detects_reqwest_timeout_decode_message() {
+        let msg = r#"reqwest::Error { kind: Decode, source: hyper::Error(Body, Error { kind: Io(Kind(TimedOut)) }) }"#;
+        assert!(should_retry_slack_adapter_error(msg));
+    }
+
+    #[test]
+    fn slack_retry_error_detects_slack_disconnect_messages() {
+        assert!(should_retry_slack_adapter_error("Slack Socket Mode disconnected"));
+        assert!(should_retry_slack_adapter_error("Slack requested disconnect"));
+        assert!(should_retry_slack_adapter_error("Slack closed the WebSocket connection"));
+    }
+
+    #[test]
+    fn slack_retry_error_ignores_non_transient_errors() {
+        assert!(!should_retry_slack_adapter_error(
+            "SLACK_APP_TOKEN environment variable not set (xapp-...)"
+        ));
+        assert!(!should_retry_slack_adapter_error(
+            "apps.connections.open failed: {\"ok\":false,\"error\":\"invalid_auth\"}"
+        ));
     }
 
     #[test]

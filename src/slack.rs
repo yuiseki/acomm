@@ -23,9 +23,12 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
+use std::time::Duration;
 
 const SOCKET_PATH: &str = "/tmp/acomm.sock";
 const SLACK_API_BASE: &str = "https://slack.com/api";
+const SLACK_OPEN_SOCKET_MODE_MAX_ATTEMPTS: usize = 3;
+const SLACK_OPEN_SOCKET_MODE_RETRY_DELAY_MS: u64 = 750;
 
 // ─── Slack Socket Mode payload types ──────────────────────────────────────────
 
@@ -190,22 +193,73 @@ pub async fn start_slack_adapter() -> Result<(), Box<dyn Error>> {
 /// Call apps.connections.open to get a fresh WebSocket URL.
 async fn open_socket_mode_connection(app_token: &str) -> Result<String, Box<dyn Error>> {
     let client = reqwest::Client::new();
-    let res: Value = client
-        .post(format!("{}/apps.connections.open", SLACK_API_BASE))
-        .header("Authorization", format!("Bearer {}", app_token))
-        .header("Content-Type", "application/x-www-form-urlencoded")
-        .send()
-        .await?
-        .json()
-        .await?;
+    for attempt in 1..=SLACK_OPEN_SOCKET_MODE_MAX_ATTEMPTS {
+        let response_json: Value = match client
+            .post(format!("{}/apps.connections.open", SLACK_API_BASE))
+            .header("Authorization", format!("Bearer {}", app_token))
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .send()
+            .await
+        {
+            Ok(res) => match res.json().await {
+                Ok(v) => v,
+                Err(e) => {
+                    let debug_msg = format!("{:?}", e);
+                    if attempt < SLACK_OPEN_SOCKET_MODE_MAX_ATTEMPTS
+                        && should_retry_open_socket_mode_reqwest_error(&debug_msg)
+                    {
+                        eprintln!(
+                            "Slack apps.connections.open body decode timed out (attempt {}/{}), retrying in {}ms: {}",
+                            attempt,
+                            SLACK_OPEN_SOCKET_MODE_MAX_ATTEMPTS,
+                            SLACK_OPEN_SOCKET_MODE_RETRY_DELAY_MS,
+                            debug_msg
+                        );
+                        tokio::time::sleep(Duration::from_millis(SLACK_OPEN_SOCKET_MODE_RETRY_DELAY_MS))
+                            .await;
+                        continue;
+                    }
+                    return Err(format!("Slack apps.connections.open decode failed: {}", e).into());
+                }
+            },
+            Err(e) => {
+                let debug_msg = format!("{:?}", e);
+                if attempt < SLACK_OPEN_SOCKET_MODE_MAX_ATTEMPTS
+                    && should_retry_open_socket_mode_reqwest_error(&debug_msg)
+                {
+                    eprintln!(
+                        "Slack apps.connections.open request timed out (attempt {}/{}), retrying in {}ms: {}",
+                        attempt,
+                        SLACK_OPEN_SOCKET_MODE_MAX_ATTEMPTS,
+                        SLACK_OPEN_SOCKET_MODE_RETRY_DELAY_MS,
+                        debug_msg
+                    );
+                    tokio::time::sleep(Duration::from_millis(SLACK_OPEN_SOCKET_MODE_RETRY_DELAY_MS))
+                        .await;
+                    continue;
+                }
+                return Err(format!("Slack apps.connections.open request failed: {}", e).into());
+            }
+        };
 
+        return parse_socket_mode_open_response(response_json).map_err(Into::into);
+    }
+
+    Err("Slack apps.connections.open failed after retries".into())
+}
+
+fn parse_socket_mode_open_response(res: Value) -> Result<String, String> {
     if res["ok"].as_bool() != Some(true) {
-        return Err(format!("apps.connections.open failed: {}", res).into());
+        return Err(format!("apps.connections.open failed: {}", res));
     }
     res["url"]
         .as_str()
         .map(|s| s.to_string())
-        .ok_or_else(|| "Missing WebSocket URL in Slack response".into())
+        .ok_or_else(|| "Missing WebSocket URL in Slack response".to_string())
+}
+
+fn should_retry_open_socket_mode_reqwest_error(message: &str) -> bool {
+    message.contains("TimedOut") || message.to_ascii_lowercase().contains("timed out")
 }
 
 /// Process a Slack message event and forward it to the bridge if appropriate.
@@ -350,5 +404,48 @@ mod tests {
         } else {
             panic!("Not a Prompt event");
         }
+    }
+
+    #[test]
+    fn test_parse_socket_mode_open_response_success() {
+        let res = json!({
+            "ok": true,
+            "url": "wss://wss-primary.slack.com/link/?ticket=abc"
+        });
+        let url = parse_socket_mode_open_response(res).expect("should parse Slack websocket URL");
+        assert!(url.starts_with("wss://"));
+    }
+
+    #[test]
+    fn test_parse_socket_mode_open_response_fails_when_ok_false() {
+        let res = json!({
+            "ok": false,
+            "error": "invalid_auth"
+        });
+        let err = parse_socket_mode_open_response(res).expect_err("should fail when ok=false");
+        assert!(err.contains("apps.connections.open failed"));
+        assert!(err.contains("invalid_auth"));
+    }
+
+    #[test]
+    fn test_parse_socket_mode_open_response_fails_when_url_missing() {
+        let res = json!({
+            "ok": true
+        });
+        let err = parse_socket_mode_open_response(res).expect_err("should fail when url is missing");
+        assert!(err.contains("Missing WebSocket URL"));
+    }
+
+    #[test]
+    fn test_should_retry_open_socket_mode_reqwest_error_detects_timeout_strings() {
+        let msg = r#"reqwest::Error { kind: Decode, source: hyper::Error(Body, Error { kind: Io(Kind(TimedOut)) }) }"#;
+        assert!(should_retry_open_socket_mode_reqwest_error(msg));
+        assert!(should_retry_open_socket_mode_reqwest_error("request timed out while reading body"));
+    }
+
+    #[test]
+    fn test_should_retry_open_socket_mode_reqwest_error_ignores_non_timeout() {
+        let msg = r#"reqwest::Error { kind: Decode, source: serde_json::Error(\"expected value\") }"#;
+        assert!(!should_retry_open_socket_mode_reqwest_error(msg));
     }
 }
