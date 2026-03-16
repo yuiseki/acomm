@@ -50,6 +50,8 @@ const OP_HEARTBEAT_ACK: u64 = 11;
 const DISCORD_PRESENCE_ONLINE: &str = "online";
 const DISCORD_PRESENCE_DND: &str = "dnd";
 const DISCORD_PRESENCE_INVISIBLE: &str = "invisible";
+const DISCORD_TYPING_REFRESH_SECS: u64 = 8;
+const DISCORD_TYPING_MAX_DURATION_SECS: u64 = 120;
 
 /// Gateway intents: GUILD_MESSAGES | DIRECT_MESSAGES
 ///
@@ -162,6 +164,21 @@ fn build_presence_update_payload(status: &str) -> GatewayPayload {
 
 fn discord_heartbeat_ack_timeout_ms(interval_ms: u64) -> u64 {
     interval_ms.saturating_add((interval_ms / 2).max(5_000))
+}
+
+fn discord_typing_max_duration() -> Duration {
+    Duration::from_secs(DISCORD_TYPING_MAX_DURATION_SECS)
+}
+
+fn discord_event_requests_typing_stop(event: &ProtocolEvent, channel: &str) -> bool {
+    match event {
+        ProtocolEvent::AgentDone { channel: Some(ch) } => ch == channel,
+        ProtocolEvent::StatusUpdate {
+            is_processing: false,
+            channel: Some(ch),
+        } => ch == channel,
+        _ => false,
+    }
 }
 
 fn discord_heartbeat_ack_is_overdue(
@@ -628,9 +645,13 @@ pub async fn start_discord_adapter() -> Result<(), Box<dyn Error>> {
                             if let Some(discord_channel_id) = discord_channel_id_from_bridge_channel(ch).map(str::to_string) {
                                 let token_clone = token.clone();
                                 let handle = tokio::spawn(async move {
+                                    let started_at = Instant::now();
                                     loop {
+                                        if started_at.elapsed() >= discord_typing_max_duration() {
+                                            break;
+                                        }
                                         let _ = trigger_discord_typing(&token_clone, &discord_channel_id).await;
-                                        tokio::time::sleep(std::time::Duration::from_secs(8)).await;
+                                        tokio::time::sleep(Duration::from_secs(DISCORD_TYPING_REFRESH_SECS)).await;
                                     }
                                 });
                                 if let Some(old) = typing_tasks.insert(key, handle) {
@@ -651,24 +672,37 @@ pub async fn start_discord_adapter() -> Result<(), Box<dyn Error>> {
                                 buf.content.push_str(chunk);
                             }
                         }
-                        ProtocolEvent::AgentDone { channel: Some(ref ch) }
-                            if ch.starts_with("discord:") =>
+                        ref ev if ev
+                            .clone_channel()
+                            .as_deref()
+                            .is_some_and(|ch| ch.starts_with("discord:"))
+                            && discord_event_requests_typing_stop(
+                                ev,
+                                ev.clone_channel().as_deref().unwrap_or_default(),
+                            ) =>
                         {
+                            let ch = ev
+                                .clone_channel()
+                                .expect("discord typing stop event must carry a channel");
                             // Stop typing indicator.
                             if let Some(handle) = typing_tasks.remove(ch.as_str()) {
                                 handle.abort();
                             }
-                            let key = ch.to_string();
-                            if let Some(buf) = reply_buffers.remove(&key) {
-                                if !buf.content.is_empty() {
-                                    let answer = extract_discord_answer(&buf.content);
-                                    let formatted = format_discord_agent_reply_with_status(
-                                        &answer,
-                                        &buf.provider,
-                                        &buf.model,
-                                    );
-                                    if let Some(discord_channel_id) = discord_channel_id_from_bridge_channel(ch) {
-                                        send_discord_message(&token, discord_channel_id, &formatted).await?;
+                            if matches!(ev, ProtocolEvent::AgentDone { .. }) {
+                                let key = ch.to_string();
+                                if let Some(buf) = reply_buffers.remove(&key) {
+                                    if !buf.content.is_empty() {
+                                        let answer = extract_discord_answer(&buf.content);
+                                        let formatted = format_discord_agent_reply_with_status(
+                                            &answer,
+                                            &buf.provider,
+                                            &buf.model,
+                                        );
+                                        if let Some(discord_channel_id) =
+                                            discord_channel_id_from_bridge_channel(&ch)
+                                        {
+                                            send_discord_message(&token, discord_channel_id, &formatted).await?;
+                                        }
                                     }
                                 }
                             }
@@ -1002,6 +1036,42 @@ mod tests {
     fn test_discord_heartbeat_ack_timeout_adds_grace_window() {
         assert_eq!(discord_heartbeat_ack_timeout_ms(1_000), 6_000);
         assert_eq!(discord_heartbeat_ack_timeout_ms(41_250), 61_875);
+    }
+
+    #[test]
+    fn test_discord_typing_max_duration_is_two_minutes() {
+        assert_eq!(discord_typing_max_duration(), Duration::from_secs(120));
+    }
+
+    #[test]
+    fn test_discord_event_requests_typing_stop_on_agent_done_same_channel() {
+        let event = ProtocolEvent::AgentDone {
+            channel: Some("discord:1:2".to_string()),
+        };
+
+        assert!(discord_event_requests_typing_stop(&event, "discord:1:2"));
+        assert!(!discord_event_requests_typing_stop(&event, "discord:9:9"));
+    }
+
+    #[test]
+    fn test_discord_event_requests_typing_stop_on_status_false_same_channel() {
+        let event = ProtocolEvent::StatusUpdate {
+            is_processing: false,
+            channel: Some("discord:1:2".to_string()),
+        };
+
+        assert!(discord_event_requests_typing_stop(&event, "discord:1:2"));
+        assert!(!discord_event_requests_typing_stop(&event, "discord:9:9"));
+    }
+
+    #[test]
+    fn test_discord_event_requests_typing_stop_ignores_status_true() {
+        let event = ProtocolEvent::StatusUpdate {
+            is_processing: true,
+            channel: Some("discord:1:2".to_string()),
+        };
+
+        assert!(!discord_event_requests_typing_stop(&event, "discord:1:2"));
     }
 
     #[test]
